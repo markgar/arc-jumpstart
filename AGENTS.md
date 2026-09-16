@@ -38,7 +38,18 @@ the next build.
    ./scripts/deploy.sh all
    ```
 
-4. Monitor real execution through completion. The numbered stages are resumable
+4. Keep deployment execution separate from the conversation. Run the full
+   validation/preflight/deployment chain in a dedicated visible terminal or an
+   asynchronous process provided by the agent host. Do not hold the agent turn
+   open on the foreground deployment command. Record the exact `ENV_FILE`,
+   command and process/terminal identity, then return control to the user
+   immediately while the deployment continues.
+   Never use `sleep`, `watch` or a polling loop merely to wait for progress.
+   User questions and status requests take priority over passive monitoring.
+   Check automatically only when the execution host reports completion or a
+   material transition; otherwise make one bounded status query when the user
+   asks. Do not launch experimental observer commands during a healthy build.
+5. Monitor real execution through completion. The numbered stages are resumable
    checkpoints for the agent, not a sequence of manual learner assignments.
    Bastion is enabled by default and submitted independently after stage `00`.
    Let Azure finish it without polling or a completion gate. Never make a build
@@ -46,14 +57,16 @@ the next build.
    Prefer saved parallel paths: `all` overlaps `20`/`30`; `deploy.sh 20-30`
    provides the same overlap during recovery. Do not serialize independent
    work, but do not remove the readiness joins before dependent stages.
-   During a long stage, use `lab.sh stage-progress <stage>` for its timestamped
-   host-side phase messages. Use `stage-log` for a longer failure tail. Do not
-   treat silence as failure, poll tightly, or launch another deployment merely
-   to obtain status.
-5. On failure, inspect the first failing gate and use the documented recovery
+   During a long stage, use `lab.sh build-status` to discover all active
+   canonical stages and return their latest timestamped host-side phase
+   messages. Use `stage-progress <stage>` when a specific stage is already
+   known, and `stage-log` for a longer failure tail after it is terminal. Each
+   status request is one-shot: do not treat silence as failure, poll tightly,
+   or launch another deployment merely to obtain status.
+6. On failure, inspect the first failing gate and use the documented recovery
    boundary. Save necessary fixes in the relevant Bicep/PowerShell source and
    regression tests before retrying the affected stage.
-6. Verify the ready-environment contract in the bootstrap runbook. Hand back
+7. Verify the ready-environment contract in the bootstrap runbook. Hand back
    non-secret resource identifiers, readiness evidence and the learner guides.
    State any blockers or unproven outcomes explicitly.
 

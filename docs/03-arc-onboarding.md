@@ -45,6 +45,16 @@ Repeat the process for:
 - `JS-SQL-AG-01`
 - `JS-SQL-AG-02`
 
+> [!NOTE]
+> Onboard `JS-DC-01` to Arc for inventory and assessment so the exercise
+> represents the whole server estate. Installing the Connected Machine agent
+> does not change its domain-controller role. Treat it as a higher-sensitivity
+> server: add only extensions required by the exercise, verify their support
+> and permissions before deployment, and do not use this DC as the lab's
+> migration target. If an organization would exclude domain controllers from
+> Arc by policy, leaving it out does not block onboarding or assessing the
+> remaining guests; record that scope decision in the assessment.
+
 From the Hyper-V host:
 
 1. Open Hyper-V Manager.

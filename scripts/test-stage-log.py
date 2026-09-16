@@ -112,10 +112,17 @@ class ViewerIntegrationTests(unittest.TestCase):
             "with open(os.environ['FAKE_CALLS'], 'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
             "account = sys.argv[1:3] == ['account', 'set']\n"
             "progress = sys.argv[1:4] == ['vm', 'run-command', 'show']\n"
+            "build_status = sys.argv[1:4] == ['vm', 'run-command', 'list']\n"
             "code = int(os.environ.get('FAKE_ACCOUNT_EXIT' if account else 'FAKE_LOG_EXIT', '0'))\n"
             "if progress and not code:\n"
             "    print(json.dumps({'state':'Running','start':'2026-09-16T15:22:41.8721341+00:00','end':None,\n"
             "      'output':'2026-09-16T15:22:51Z [stage40] waiting fake-host-password','error':''}))\n"
+            "elif build_status and not code:\n"
+            "    print(json.dumps([\n"
+            "      {'name':'stage10-init-host','instanceView':{'executionState':'Succeeded','startTime':'2026-09-16T15:00:00Z','endTime':'2026-09-16T15:10:00Z','output':'stage 10 done','error':''}},\n"
+            "      {'name':'stage20-host-network','instanceView':{'executionState':'Running','startTime':'2026-09-16T15:20:00Z','endTime':None,'output':'[stage20] configuring network','error':''}},\n"
+            "      {'name':'stage30-images','instanceView':{'executionState':'Running','startTime':'2026-09-16T15:19:00Z','endTime':None,'output':'[stage30] downloading fake-host-password','error':''}},\n"
+            "      {'name':'unrelated-observer','instanceView':{'executionState':'Running','startTime':'2026-09-16T15:21:00Z','output':'ignore me'}}]))\n"
             "elif not account or code:\n"
             "    print('Host Application: powershell.exe -Password fake-unconfigured-old')\n"
             "    print('wrapped fake-old-value\\nProcess ID: 123\\n**********************')\n"
@@ -192,6 +199,20 @@ class ViewerIntegrationTests(unittest.TestCase):
         self.assertNotIn("Elapsed=unknown", result.stdout)
         self.assertIn("[stage40] waiting [REDACTED]", result.stdout)
         self.assertNotIn("fake-host-password", result.stdout + result.stderr)
+
+    def test_build_status_discovers_all_active_canonical_stages(self):
+        result = self.run_viewer(command="build-status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        self.assertEqual(calls[1][:3], ["vm", "run-command", "list"])
+        self.assertNotIn("invoke", calls[1])
+        self.assertIn("BuildState=Running", result.stdout)
+        self.assertIn("ActiveStages=20,30", result.stdout)
+        self.assertIn("Stage=20", result.stdout)
+        self.assertIn("Stage=30", result.stdout)
+        self.assertNotIn("Stage=10", result.stdout)
+        self.assertNotIn("unrelated-observer", result.stdout)
+        self.assertIn("[stage30] downloading [REDACTED]", result.stdout)
 
     def test_every_stage_has_timestamped_progress_or_worker_logging(self):
         direct = ("10-init-host.ps1", "20-host-network.ps1", "30-download-images.ps1",

@@ -62,6 +62,24 @@ Set `DEPLOY_BASTION=false` only if you want to omit it.
 
 ## Quick start
 
+### Let an attached agent run it
+
+Open this repository in an agent-enabled workspace and give the agent this
+instruction:
+
+> Follow `AGENTS.md` and build a new lab. Use my approved Azure target and
+> credentials, run validation and preflight first, then start
+> `./scripts/deploy.sh all` in a separate visible terminal so you remain
+> responsive. Do not poll continuously. When I ask for progress, run one
+> `./scripts/lab.sh build-status` check. Stop after stage `60`; do not onboard
+> Arc or start assessment or migration.
+
+The agent should ask only for genuinely missing Azure target, authentication,
+credential or cost-scope inputs. The long deployment runs in its own terminal;
+the conversation remains available for questions and one-shot status checks.
+
+### Run it yourself
+
 ```bash
 if [[ ! -f deploy.env ]]; then
   cp deploy.env.example deploy.env
@@ -72,6 +90,13 @@ az login
 ./scripts/validate.sh &&
 ./scripts/preflight.sh infra &&
 ./scripts/deploy.sh all
+```
+
+Keep that terminal open. In another terminal, request a one-shot progress view
+without starting another operation:
+
+```bash
+./scripts/lab.sh build-status
 ```
 
 For a new lab, `all` is the normal path. Numbered stages are agent debugging and
@@ -86,11 +111,13 @@ three guests in parallel. Stage `40` still requires both networking and images
 to succeed, and domain/cluster readiness gates remain mandatory.
 Use `./scripts/lab.sh status`, `stop`, and `start` for lifecycle operations; it reads only the non-secret Azure identifiers it needs from `deploy.env`.
 
-During a long-running stage, `./scripts/lab.sh stage-progress <stage>` reads the
-existing Managed Run Command's state, elapsed time and bounded latest timestamped
-output without launching another VM command. Detailed logs remain on the
-workshop host; no storage account or public log endpoint is created. Use
-`stage-log` for a longer diagnostic tail after the stage is terminal.
+During a long-running stage, `./scripts/lab.sh build-status` discovers all active
+canonical stages and reads their existing Managed Run Command state, elapsed
+time and bounded latest timestamped output without launching another VM
+command. Use `stage-progress <stage>` when the stage is already known. Detailed
+logs remain on the workshop host; no storage account or public log endpoint is
+created. Use `stage-log` for a longer diagnostic tail after the stage is
+terminal.
 
 The development lab and a separate fresh Windows-template proof succeeded.
 A clean replay of the complete updated pipeline, including parallel SQL

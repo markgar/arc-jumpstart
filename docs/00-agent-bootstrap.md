@@ -85,6 +85,35 @@ From the repository root, after configuration and Azure authentication:
 The `&&` chain prevents deployment after failed source validation or preflight.
 The deployment wrapper does not itself invoke those two entry points.
 
+### Responsive agent execution
+
+An attached agent must run the chain in a dedicated visible terminal or an
+asynchronous process supplied by its host environment. The deployment remains
+a foreground process in that terminal, but the conversational agent must not
+block its own turn waiting for it. Record the exact `ENV_FILE`, command and
+terminal/process identity, then return control to the user immediately.
+
+Do not use `sleep`, `watch`, repeated terminal reads or a polling loop to occupy
+the conversation while Azure works. Do not launch an observer Run Command or
+another deployment to make a healthy operation more visible. Answer user
+questions promptly. On a status request, perform one bounded query and return
+the result:
+
+```bash
+ENV_FILE=/absolute/private/path/lab.local.env ./scripts/lab.sh build-status
+```
+
+`build-status` discovers every concurrently active canonical stage, so the
+caller does not need to know that stages `20` and `30` are overlapping. If
+nothing is active, it reports the most recently started stage. During stage
+`00`, preflight or a local wrapper-only boundary such as the stage `10` restart,
+there may be no active Managed Run Command; report that limitation rather than
+starting a diagnostic operation.
+
+Automatic checks are appropriate when the execution host reports command
+completion or another material transition. Otherwise wait for a user status
+request without holding an agent turn open merely for time to pass.
+
 `all` follows the dependency graph: `00` -> `10` -> overlapping `20`/`30` ->
 `40` -> `45` -> `50` -> `60`. It uses Bicep, embeds the saved PowerShell
 artifacts, handles the stage `10` host restart, and requires successful image
@@ -106,10 +135,12 @@ between stages. Stage `30` downloads approximately 38 GiB of images; stage `45`
 downloads SQL media once and installs on three guests in parallel. A quiet
 terminal is not proof of a hang, and a running VM is not proof that SQL is ready.
 
-Use `./scripts/lab.sh stage-progress <stage>` during long operations. It reads
-the active Managed Run Command's existing instance view and returns immediately
-with state, elapsed time and its bounded latest timestamped output. It does not
-launch another command inside the busy VM, and no storage account is required.
+Use `./scripts/lab.sh build-status` as the normal one-shot check during long
+operations. Use `./scripts/lab.sh stage-progress <stage>` when the relevant
+stage is already known. Both read existing Managed Run Command instance views
+and return immediately with state, elapsed time and bounded latest timestamped
+output. Neither launches another command inside the busy VM, and no storage
+account is required.
 Report the last observable step and wait reason rather than only saying that a
 script is running. Use the longer host-side `stage-log` view after the stage is
 terminal. Do not tight-poll or confuse repeated wait messages with proof of

@@ -2,7 +2,12 @@
 
 Arc-based discovery removes the appliance from the assessment path. Hyper-V replication uses a different component: the Azure Site Recovery provider and Recovery Services agent installed directly on the Hyper-V host. An Azure Migrate appliance is not required for Hyper-V migration.
 
-Start with `JS-UBUNTU-01` or `JS-SQL-01`. Do not make the two-node availability group your first migration target.
+Start with `JS-UBUNTU-01` or `JS-SQL-01`. Do not make the two-node availability
+group your first migration target. `JS-DC-01` may be Arc-enabled for inventory
+and assessment, but do not select it as a migration target in this lab. Moving
+a domain controller requires a separate Active Directory migration and
+recovery design rather than this workshop's generic server lift-and-shift
+exercise.
 
 ## Freeze the assessment and prepare the guest for Azure
 

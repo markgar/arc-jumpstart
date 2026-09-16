@@ -19,6 +19,7 @@ inputs and required ready-environment outcome.
 | `./scripts/deploy.sh 20-30` | Starts image downloads and configures the independent host network while they run, then requires successful download completion. Requires a ready stage `10` host; do not use while either earlier operation is active. |
 | `./scripts/deploy.sh bastion` | Submits only the independent Bastion deployment with `--no-wait`, against an existing foundation network. Explicitly requests Bastion even when `DEPLOY_BASTION=false`; requires only the four Azure target settings, not guest credentials. Does not verify readiness. |
 | `./scripts/lab.sh status` | Reports outer host power state only; not whole-lab readiness. |
+| `./scripts/lab.sh build-status` | Discovers every active canonical stage and displays each existing Managed Run Command instance view. If none is active, displays the most recently started stage. Does not launch a VM command. |
 | `./scripts/lab.sh stage-log 60` | Displays the latest stage transcript through `show-stage-log.py`, suppressing startup headers and redacting configured sensitive values. Raw host files remain sensitive. |
 | `./scripts/lab.sh stage-progress 40` | Reads the active Managed Run Command's existing instance view and returns state, start/end, elapsed time and latest redacted output. It does not launch another command inside the busy VM. |
 | `./scripts/lab.sh stop` / `start` | Deallocates or starts the outer Azure host. Deallocation does not stop storage/Bastion charges; keep the host allocated during replication/migration. |
@@ -62,19 +63,22 @@ guest OOBE, SQL worker state, domain promotion, native cluster validation,
 automatic seeding and listener verification. No storage account or external log
 service is required for this workshop.
 
-An orchestrating agent should inspect a running stage with:
+An attached agent should normally inspect a running build with:
 
 ```bash
-ENV_FILE=/absolute/private/path/lab.local.env ./scripts/lab.sh stage-progress 40
+ENV_FILE=/absolute/private/path/lab.local.env ./scripts/lab.sh build-status
 ```
 
-Substitute the active stage. Repeat only when a progress update is useful; do
-not create a tight polling loop. The command reads the existing Managed Run
-Command instance view, so it returns promptly instead of queueing an Action Run
-Command behind the active stage. `Elapsed` is calculated from Azure's start
-time. A recent or repeated wait message proves observation, not necessarily
-forward progress. Azure retains only a bounded latest-output window in instance
-view. The output can only describe observable state:
+It discovers all concurrently active canonical stages, including overlapping
+stages `20` and `30`. If no stage is active, it reports the most recently
+started one. Use `stage-progress 40` when the desired stage is already known.
+Repeat either command only when a progress update is useful; do not create a
+tight polling loop. These commands read existing Managed Run Command instance
+views, so they return promptly instead of queueing an Action Run Command behind
+the active stage. `Elapsed` is calculated from Azure's start time. A recent or
+repeated wait message proves observation, not necessarily forward progress.
+Azure retains only a bounded latest-output window in instance view. The output
+can only describe observable state:
 for example, it can say Sysprep is still running or the guest has not completed
 OOBE, but cannot invent an internal Windows substep.
 

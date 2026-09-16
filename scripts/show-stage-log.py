@@ -44,6 +44,7 @@ SECRET_PARAMETER = re.compile(
 HEADER_START = re.compile(r"Windows PowerShell transcript start|Host\s+Application\s*:", re.IGNORECASE)
 HEADER_END = re.compile(r"^\s*\*{6,}\s*$")
 ANSI_SEQUENCE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+TERMINAL_STATES = {"Succeeded", "Failed", "Canceled"}
 
 # Filter the entire header before tail selection: a tail beginning in a wrapped
 # process argument would otherwise have lost the Host Application label.
@@ -164,17 +165,35 @@ def run_az(arguments, redactor):
     return result.returncode if result.returncode >= 0 else 128 - result.returncode
 
 
-def run_progress(settings, stage, redactor):
-    arguments = [
-        "vm", "run-command", "show",
-        "--resource-group", settings["AZURE_RESOURCE_GROUP"],
-        "--vm-name", settings["NAME_PREFIX"] + "-host",
-        "--name", COMMANDS[stage],
-        "--expand", "instanceView",
-        "--query", "{state:instanceView.executionState,start:instanceView.startTime,"
-                   "end:instanceView.endTime,output:instanceView.output,error:instanceView.error}",
-        "--output", "json",
-    ]
+def elapsed_time(start):
+    if not start:
+        return "unknown"
+    try:
+        # Azure commonly emits seven fractional-second digits; Python 3.9
+        # accepts at most six.
+        normalized_start = re.sub(r"(\.\d{6})\d+(?=[+-]|Z|$)", r"\1", start)
+        started = datetime.fromisoformat(normalized_start.replace("Z", "+00:00"))
+        return str(datetime.now(timezone.utc) - started).split(".", 1)[0]
+    except (TypeError, ValueError):
+        return "unknown"
+
+
+def print_progress(stage, progress, redactor):
+    start = progress.get("start")
+    print(f"Stage={stage}")
+    print(f"ExecutionState={progress.get('state') or 'unknown'}")
+    print(f"StartUtc={start or 'unknown'}")
+    print(f"EndUtc={progress.get('end') or ''}")
+    print(f"Elapsed={elapsed_time(start)}")
+    print("LatestOutput:")
+    output = progress.get("output") or "(no output reported yet)"
+    print(redactor.sanitize(output).rstrip())
+    if progress.get("error"):
+        print("LatestError:", file=sys.stderr)
+        print(redactor.sanitize(progress["error"]).rstrip(), file=sys.stderr)
+
+
+def run_json_az(arguments, redactor):
     try:
         result = subprocess.run(
             ["az", *arguments], stdin=subprocess.DEVNULL,
@@ -186,34 +205,80 @@ def run_progress(settings, stage, redactor):
     sys.stderr.write(redactor.sanitize(result.stderr))
     if result.returncode:
         sys.stdout.write(redactor.sanitize(result.stdout))
-        return result.returncode
+        return result.returncode, None
     try:
-        progress = json.loads(result.stdout)
+        return 0, json.loads(result.stdout)
     except (UnicodeError, json.JSONDecodeError):
         print("Azure returned an unreadable progress response.", file=sys.stderr)
-        return 1
-    start = progress.get("start")
-    elapsed = "unknown"
-    if start:
-        try:
-            # Azure commonly emits seven fractional-second digits; Python 3.9
-            # accepts at most six.
-            normalized_start = re.sub(r"(\.\d{6})\d+(?=[+-]|Z|$)", r"\1", start)
-            started = datetime.fromisoformat(normalized_start.replace("Z", "+00:00"))
-            elapsed = str(datetime.now(timezone.utc) - started).split(".", 1)[0]
-        except (TypeError, ValueError):
-            pass
-    print(f"Stage={stage}")
-    print(f"ExecutionState={progress.get('state') or 'unknown'}")
-    print(f"StartUtc={start or 'unknown'}")
-    print(f"EndUtc={progress.get('end') or ''}")
-    print(f"Elapsed={elapsed}")
-    print("LatestOutput:")
-    output = progress.get("output") or "(no output reported yet)"
-    print(redactor.sanitize(output).rstrip())
-    if progress.get("error"):
-        print("LatestError:", file=sys.stderr)
-        print(redactor.sanitize(progress["error"]).rstrip(), file=sys.stderr)
+        return 1, None
+
+
+def run_progress(settings, stage, redactor):
+    status, progress = run_json_az([
+        "vm", "run-command", "show",
+        "--resource-group", settings["AZURE_RESOURCE_GROUP"],
+        "--vm-name", settings["NAME_PREFIX"] + "-host",
+        "--name", COMMANDS[stage],
+        "--expand", "instanceView",
+        "--query", "{state:instanceView.executionState,start:instanceView.startTime,"
+                   "end:instanceView.endTime,output:instanceView.output,error:instanceView.error}",
+        "--output", "json",
+    ], redactor)
+    if status:
+        return status
+    print_progress(stage, progress, redactor)
+    return 0
+
+
+def run_build_status(settings, redactor):
+    status, commands = run_json_az([
+        "vm", "run-command", "list",
+        "--resource-group", settings["AZURE_RESOURCE_GROUP"],
+        "--vm-name", settings["NAME_PREFIX"] + "-host",
+        "--expand", "instanceView",
+        "--output", "json",
+    ], redactor)
+    if status:
+        return status
+
+    stages_by_command = {command: stage for stage, command in COMMANDS.items()}
+    observed = []
+    for command in commands:
+        stage = stages_by_command.get(command.get("name"))
+        if not stage:
+            continue
+        instance_view = command.get("instanceView") or {}
+        observed.append((stage, {
+            "state": instance_view.get("executionState"),
+            "start": instance_view.get("startTime"),
+            "end": instance_view.get("endTime"),
+            "output": instance_view.get("output"),
+            "error": instance_view.get("error"),
+        }))
+
+    active = [
+        item for item in observed
+        if item[1].get("state") and item[1]["state"] not in TERMINAL_STATES
+    ]
+    if active:
+        selected = sorted(active, key=lambda item: list(STAGES).index(item[0]))
+        print("BuildState=Running")
+        print("ActiveStages=" + ",".join(stage for stage, _ in selected))
+    elif observed:
+        selected = [max(observed, key=lambda item: item[1].get("start") or "")]
+        print("BuildState=NoActiveStage")
+        print("ActiveStages=")
+        print(f"LatestStage={selected[0][0]}")
+    else:
+        print("BuildState=NotStarted")
+        print("ActiveStages=")
+        print("No canonical stage Run Command was found. Stage 00 or local preflight may still be running.")
+        return 0
+
+    for index, (stage, progress) in enumerate(selected):
+        if index:
+            print("---")
+        print_progress(stage, progress, redactor)
     return 0
 
 
@@ -222,7 +287,9 @@ def main(argv=None):
     parser.add_argument("--env-file", required=True)
     parser.add_argument("--progress", action="store_true",
                         help="Show a concise live tail rather than the longer diagnostic view.")
-    parser.add_argument("stage")
+    parser.add_argument("--auto", action="store_true",
+                        help="Discover and show all active canonical stages.")
+    parser.add_argument("stage", nargs="?")
     args = parser.parse_args(argv)
     try:
         settings, entries = load_configuration(args.env_file)
@@ -231,7 +298,9 @@ def main(argv=None):
         print(f"Unable to read viewer configuration ({type(error).__name__}).", file=sys.stderr)
         return 1
     redactor = Redactor([*entries, *os.environ.items()])
-    if args.stage not in STAGES:
+    if args.auto and not args.progress:
+        parser.error("--auto requires --progress")
+    if not args.auto and args.stage not in STAGES:
         print("Usage: scripts/lab.sh <stage-progress|stage-log> <10|20|30|40|45|50|60>",
               file=sys.stderr)
         return 1
@@ -243,6 +312,8 @@ def main(argv=None):
     status = run_az(["account", "set", "--subscription", settings["AZURE_SUBSCRIPTION_ID"]], redactor)
     if status:
         return status
+    if args.auto:
+        return run_build_status(settings, redactor)
     if args.progress:
         return run_progress(settings, args.stage, redactor)
     return run_az([

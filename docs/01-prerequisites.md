@@ -106,7 +106,17 @@ After configuring `deploy.env`, run:
 
 ```bash
 ./scripts/validate.sh
-./scripts/preflight.sh
+./scripts/preflight.sh infra
 ```
 
 The first command performs source validation. The second checks the authenticated subscription, provider registration, regional VM SKU restrictions, and source-image reachability. Regional quota is subscription-specific; confirm the available **Standard ESv5 Family vCPUs** in Azure Quotas before deploying.
+
+Then start the complete infrastructure build:
+
+```bash
+./scripts/deploy.sh all
+```
+
+Keep that process running in its terminal. From another terminal, use
+`./scripts/lab.sh build-status` for a one-shot progress report. Do not start a
+second deployment when the first terminal is quiet.

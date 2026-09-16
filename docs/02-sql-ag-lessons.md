@@ -131,6 +131,27 @@ commands without enabling CredSSP.
 Do not replace active work, delete its marker, or interpret an operation's
 timeout budget as permission to kill cluster configuration.
 
+### Cluster creation completion can precede cluster query readiness
+
+On the fresh progress-proof build, native validation passed and `New-Cluster`
+completed with verified exit `0`, but the immediate follow-up `Get-Cluster`
+briefly failed to open the new `JS-SQLCLU` control plane. The cluster creation
+receipt was terminal and trustworthy; deleting or recreating the cluster would
+have discarded good state rather than fixing the verification race.
+
+Stage `60` now waits up to five minutes after cluster creation or node addition,
+querying `Get-Cluster` and `Get-ClusterNode` every 15 seconds. Each wait reports
+the timestamp and last native error or node state. Success still requires the
+intended cluster name and both expected nodes `Up`; timeout preserves and
+reports the final native observation. A rerun retains the existing cluster and
+continues from verification instead of issuing another `New-Cluster`.
+
+The same run exposed a cleanup-only warning after the known terminal verification
+failure. The outer held PowerShell Direct session is now explicitly removed when
+the returned error identifies the exact operation attempt as terminal. Unknown
+transport outcomes still leave the session untouched so durable process evidence
+can be inspected before any retry.
+
 ### Generated commands must be exercised, not merely parsed
 
 Continuation backticks inside an expandable here-string were consumed by the

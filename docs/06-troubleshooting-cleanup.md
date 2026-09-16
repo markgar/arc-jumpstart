@@ -171,6 +171,13 @@ safe retry boundaries.
 - Preserve the working cluster and correct the probe before retrying. Repeating
   a deterministic SQL conversion error until a startup timeout does not repair
   it.
+- A successful `New-Cluster` process can return before the new cluster control
+  plane accepts `Get-Cluster`. Stage `60` waits five minutes with timestamped
+  15-second observations and still requires both intended nodes `Up`. If that
+  wait expires, preserve the cluster and the `ArcJumpstart-CreateCluster` and
+  `ArcJumpstart-VerifyCluster` receipts. Correct the first native error, then
+  rerun only stage `60`; do not delete or recreate a cluster whose creation
+  receipt completed with exit `0`.
 - A successful query can also observe an intermediate startup state. On AG02,
   the new SQL process returned `IsHadrEnabled=1,HadrManagerStatus=2` about two
   seconds after starting, then reached `1,1` without another restart or repair.

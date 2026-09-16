@@ -832,6 +832,59 @@ if ($validationAssignment.Extent.Text.Contains("+ '.htm'") -or
         throw 'Genuine transient transport failures must retain bounded retry behavior.'
     }
 }
+& {
+    . ([scriptblock]::Create((Get-FunctionText Wait-LabClusterReady)))
+    function Get-Date { $script:clusterNow }
+    function Start-Sleep {
+        param($Seconds)
+        $script:clusterSleeps++
+        $script:clusterNow = $script:clusterNow.AddSeconds($Seconds)
+    }
+    function Write-Host { param($Object) $script:clusterMessages += "$Object" }
+    function Get-Cluster {
+        param($Name, $ErrorAction)
+        $script:clusterAttempts++
+        if ($script:clusterAttempts -le $script:clusterFailures) { throw $script:clusterError }
+        [pscustomobject]@{ Name = $Name }
+    }
+    function Get-ClusterNode {
+        param($Cluster, $ErrorAction)
+        $script:clusterNodes
+    }
+    function Reset-ClusterCase {
+        $script:clusterNow = [DateTime]::Parse('2026-09-16T16:20:00Z').ToUniversalTime()
+        $script:clusterSleeps = 0
+        $script:clusterMessages = @()
+        $script:clusterAttempts = 0
+        $script:clusterFailures = 1
+        $script:clusterError = 'An error occurred opening cluster JS-SQLCLU.'
+        $script:clusterNodes = @(
+            [pscustomobject]@{ Name = 'JS-SQL-AG-01'; State = 'Up' },
+            [pscustomobject]@{ Name = 'JS-SQL-AG-02'; State = 'Up' }
+        )
+    }
+    Reset-ClusterCase
+    $ready = Wait-LabClusterReady -ClusterName JS-SQLCLU `
+        -ExpectedNodes @('JS-SQL-AG-01', 'JS-SQL-AG-02') -TimeoutSeconds 30 -IntervalSeconds 15
+    if ($script:clusterAttempts -ne 2 -or $script:clusterSleeps -ne 1 -or
+        $ready.Nodes.Count -ne 2 -or ($script:clusterMessages -join "`n") -notlike '*An error occurred opening cluster*') {
+        throw 'Transient post-create cluster-open failures must be logged and retried to both-nodes-Up readiness.'
+    }
+    Reset-ClusterCase
+    $script:clusterFailures = [int]::MaxValue
+    Assert-Throws {
+        Wait-LabClusterReady -ClusterName JS-SQLCLU `
+            -ExpectedNodes @('JS-SQL-AG-01', 'JS-SQL-AG-02') -TimeoutSeconds 30 -IntervalSeconds 15
+    } 'An error occurred opening cluster'
+    if ($script:clusterSleeps -ne 2) { throw 'Cluster readiness timeout must remain bounded by the configured interval/deadline.' }
+    Reset-ClusterCase
+    $script:clusterFailures = 0
+    $script:clusterNodes[1].State = 'Joining'
+    Assert-Throws {
+        Wait-LabClusterReady -ClusterName JS-SQLCLU `
+            -ExpectedNodes @('JS-SQL-AG-01', 'JS-SQL-AG-02') -TimeoutSeconds 30 -IntervalSeconds 15
+    } 'JS-SQL-AG-02=Joining'
+}
 . ([scriptblock]::Create((Get-FunctionText Assert-LocalProcessCompletion)))
 . ([scriptblock]::Create((Get-FunctionText Assert-NoActiveLabOperation)))
 & {
@@ -893,7 +946,7 @@ if ($helperAst.Find({
 & {
     . ([scriptblock]::Create($helperAst.Extent.Text))
     $credential = [pscredential]::new('JUMPSTART\Administrator', (ConvertTo-SecureString 'test-only-secret' -AsPlainText -Force))
-    $script:sessionEvents = @(); $script:invokeFails = $false
+    $script:sessionEvents = @(); $script:invokeFails = $false; $script:knownFailure = $false
     function New-PSSession {
         param($VMName, $Credential, $ErrorAction)
         if ($VMName -ne 'JS-SQL-AG-01' -or $Credential.UserName -ne 'JUMPSTART\Administrator') { throw 'Incorrect Direct connection identity.' }
@@ -906,6 +959,9 @@ if ($helperAst.Find({
             throw 'Hold one explicit Direct session and transport the run-as credential only as PSCredential.'
         }
         $script:sessionEvents += 'invoke'
+        if ($script:knownFailure) {
+            throw "Local operation ArcJumpstart-CreateCluster attempt=$($ArgumentList[4]) failed: Local operation failed (exit 1): native cluster failure."
+        }
         if ($script:invokeFails) { throw 'unknown transport outcome' }
         @{ AttemptId = $ArgumentList[4]; ExitCode = 0 }
     }
@@ -920,6 +976,15 @@ if ($helperAst.Find({
     $script:sessionEvents = @(); $script:invokeFails = $true
     Assert-Throws $run 'unknown transport outcome'
     if (($script:sessionEvents -join ',') -ne 'connect,invoke') { throw 'An unknown outcome must not trigger a retry or explicit session termination.' }
+    $script:sessionEvents = @(); $script:invokeFails = $false; $script:knownFailure = $true
+    Assert-Throws $run 'native cluster failure'
+    if (($script:sessionEvents -join ',') -ne 'connect,invoke,close') {
+        throw 'A recognized terminal local-operation failure must preserve the error and close its held Direct session.'
+    }
+}
+if (-not $ast.Extent.Text.Contains('${function:Wait-LabClusterReady}') -or
+    -not $ast.Extent.Text.Contains("Wait-LabClusterReady -ClusterName")) {
+    throw 'Generated cluster verification must embed and invoke the bounded readiness helper.'
 }
 & {
     function Join-Path { param($Path, $ChildPath) "$Path\$ChildPath" }

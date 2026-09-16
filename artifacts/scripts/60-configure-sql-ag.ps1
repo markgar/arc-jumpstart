@@ -125,6 +125,50 @@ function Invoke-GuestWithRetry {
     } while ($true)
 }
 
+function Wait-LabClusterReady {
+    param(
+        [Parameter(Mandatory)]
+        [string]$ClusterName,
+
+        [Parameter(Mandatory)]
+        [string[]]$ExpectedNodes,
+
+        [int]$TimeoutSeconds = 300,
+
+        [int]$IntervalSeconds = 15
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $lastObservation = 'No cluster query has completed.'
+    do {
+        try {
+            $cluster = Get-Cluster -Name $ClusterName -ErrorAction Stop
+            $nodes = @(Get-ClusterNode -Cluster $cluster.Name -ErrorAction Stop)
+            $missingNodes = @($ExpectedNodes | Where-Object { $_ -notin $nodes.Name })
+            $unreadyNodes = @($nodes | Where-Object { $_.Name -in $ExpectedNodes -and $_.State -ne 'Up' })
+            if ($cluster.Name -ieq $ClusterName -and $nodes.Count -eq $ExpectedNodes.Count -and
+                -not $missingNodes -and -not $unreadyNodes) {
+                return [pscustomobject]@{ Cluster = $cluster; Nodes = $nodes }
+            }
+            $nodeSummary = if ($nodes) {
+                ($nodes | ForEach-Object { "$($_.Name)=$($_.State)" }) -join ', '
+            }
+            else {
+                'none'
+            }
+            $lastObservation = "cluster=$($cluster.Name); nodes=$nodeSummary; missing=$($missingNodes -join ', ')"
+        }
+        catch {
+            $lastObservation = "$($_.Exception.GetType().FullName): $($_.Exception.Message)"
+        }
+        if ((Get-Date) -ge $deadline) {
+            throw "Timed out waiting for cluster $ClusterName to open with both expected nodes Up. Last observation: $lastObservation"
+        }
+        Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage60] Cluster $ClusterName is not ready for verification; waiting ${IntervalSeconds}s. Last observation: $lastObservation"
+        Start-Sleep -Seconds $IntervalSeconds
+    } while ($true)
+}
+
 function Invoke-GuestLocalProcess {
     param(
         [Parameter(Mandatory)]
@@ -152,8 +196,9 @@ function Invoke-GuestLocalProcess {
         # Keep the session alive until the credentialed local process exits.
         # Do not retry this invocation after transport failure: its outcome may
         # be unknown and the next run must inspect the durable process evidence.
-        Invoke-Command -Session $session -ErrorAction Stop `
-            -ArgumentList $ProcessCredential, $OperationName, $ScriptText, $TimeoutSeconds, $attemptId -ScriptBlock {
+        try {
+            Invoke-Command -Session $session -ErrorAction Stop `
+                -ArgumentList $ProcessCredential, $OperationName, $ScriptText, $TimeoutSeconds, $attemptId -ScriptBlock {
             param($LocalCredential, $Operation, $OperationScript, $BudgetSeconds, $AttemptId)
             $ErrorActionPreference = 'Stop'
             function Assert-LocalProcessCompletion {
@@ -321,7 +366,15 @@ exit `$exitCode
             catch { throw "Local operation $Operation attempt=$AttemptId failed: $($_.Exception.Message). Evidence: $operationRoot\$Operation\$AttemptId" }
             finally { try { $controlLock.Dispose() } catch { } }
         }
-        $invocationReturned = $true
+            $invocationReturned = $true
+        }
+        catch {
+            $knownFailurePrefix = "Local operation $OperationName attempt=$attemptId failed:"
+            if ($_.Exception.Message.StartsWith($knownFailurePrefix, [StringComparison]::Ordinal)) {
+                $invocationReturned = $true
+            }
+            throw
+        }
     }
     finally {
         if ($invocationReturned) {
@@ -866,14 +919,12 @@ Add-ClusterNode -Cluster '$($ClusterName.Replace("'", "''"))' -Name '$($secondar
     }
 
     $verifyClusterScript = @"
-Import-Module FailoverClusters
-`$cluster = Get-Cluster -Name '$($ClusterName.Replace("'", "''"))' -ErrorAction Stop
-`$nodes = @(Get-ClusterNode -Cluster `$cluster.Name -ErrorAction Stop)
-if (`$cluster.Name -ine '$($ClusterName.Replace("'", "''"))' -or `$nodes.Count -ne 2 -or
-    '$primaryName' -notin `$nodes.Name -or '$secondaryName' -notin `$nodes.Name -or
-    @(`$nodes | Where-Object State -ne 'Up').Count) {
-    throw 'Cluster creation/membership postcondition failed: expected both SQL nodes Up in the intended cluster. Witness ACLs are blocked.'
+function Wait-LabClusterReady {
+${function:Wait-LabClusterReady}
 }
+Import-Module FailoverClusters
+Wait-LabClusterReady -ClusterName '$($ClusterName.Replace("'", "''"))' `
+    -ExpectedNodes @('$($primaryName.Replace("'", "''"))', '$($secondaryName.Replace("'", "''"))') | Out-Null
 "@
     Invoke-GuestLocalProcess -VMName $primaryName -ConnectionCredential $domainCredential `
         -ProcessCredential $domainCredential -OperationName 'ArcJumpstart-VerifyCluster' -ScriptText $verifyClusterScript

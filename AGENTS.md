@@ -76,6 +76,13 @@ the next build.
   JSON or untracked portal changes.
 - Do not install/onboard Arc, enable assessment collectors or initiate migration
   during infrastructure preparation unless separately requested.
+- When separately assisting with Arc onboarding, install the Connected Machine
+  agent but stop before `azcmagent connect`. Run
+  `azcmagent check --location <arc-region>` on that guest and resolve every
+  required endpoint failure before connecting it. A successful MSI/package
+  download proves only general HTTPS access, not Arc service connectivity.
+  Never start a competing check while a connect operation is active; wait for
+  the first operation to become terminal, then check before any retry.
 - Never print or commit `deploy.env`, passwords, SAS tokens or registration keys.
   Use `lab.sh stage-log`; raw Windows transcripts can contain credentials.
 - Never bypass OOBE, licensing, SQL readiness, cluster validation or operation

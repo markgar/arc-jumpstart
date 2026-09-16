@@ -20,6 +20,7 @@ for script in scripts/*.sh; do
   bash -n "$script"
 done
 python3 scripts/test-check-sql-media.py
+python3 scripts/test-arc-launcher.py
 python3 scripts/test-stage-log.py
 python3 scripts/test-bastion.py
 

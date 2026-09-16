@@ -197,6 +197,36 @@ azcmagent check
 Get-Service himds
 ```
 
+Browser-based Bastion clipboard does not reliably pass through the second
+Hyper-V VMConnect console boundary. Do not require learners to type or paste a
+portal-generated onboarding script into that console. An operator can use
+[`prepare-arc-device-code-launchers.ps1`](../artifacts/scripts/prepare-arc-device-code-launchers.ps1)
+from the Hyper-V host to stage a non-secret **Connect to Azure Arc** launcher on
+the guests' public desktops. The learner then opens the launcher, completes the
+device login on their own computer and observes the final connection result.
+The launcher records network-check and final status evidence locally but
+intentionally does not record the short-lived device code.
+
+Run the preparation script in an elevated PowerShell session on the Hyper-V
+host. Prompt for the domain administrator password as a secure string so it is
+not placed in command history:
+
+```powershell
+$domainPassword = Read-Host 'JUMPSTART\Administrator password' -AsSecureString
+.\prepare-arc-device-code-launchers.ps1 `
+    -SubscriptionId '<subscription-id>' `
+    -ArcResourceGroup '<arc-resource-group>' `
+    -ArcLocation '<arc-region>' `
+    -DomainAdministratorPassword $domainPassword
+```
+
+The script defaults to all four Windows guests. Use `-VMNames` for an approved
+first wave such as `JS-SQL-01`. It stages only the launcher and non-secret Azure
+target identifiers; it does not run `azcmagent connect`. On the guest, the
+learner double-clicks **Connect to Azure Arc.cmd**, approves elevation, observes
+the mandatory network check, and completes the displayed device-code login on
+their own computer.
+
 > [!IMPORTANT]
 > The nested guests run on a Hyper-V host that is itself an Azure VM. This is an evaluation-only topology. Before onboarding the full set, onboard one disposable guest and confirm it is accepted as a Hyper-V VM rather than detected as an Azure VM. Check whether Azure IMDS (`169.254.169.254`) or an Azure VM Guest Agent is reachable inside the guest. If Arc rejects the guest as Azure-hosted, follow Microsoft's [evaluation procedure for Arc on an Azure VM](https://learn.microsoft.com/azure/azure-arc/servers/plan-evaluate-on-azure-virtual-machine), record the reversible changes, and retest before continuing.
 

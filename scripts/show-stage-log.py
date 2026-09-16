@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from urllib.parse import quote, quote_plus, unquote, unquote_plus
 
 
@@ -20,6 +21,15 @@ STAGES = {
     "45": "45-install-sql",
     "50": "50-configure-domain",
     "60": "60-configure-sql-ag",
+}
+COMMANDS = {
+    "10": "stage10-init-host",
+    "20": "stage20-host-network",
+    "30": "stage30-images",
+    "40": "stage40-nested-vms",
+    "45": "stage45-sql-install",
+    "50": "stage50-domain",
+    "60": "stage60-sql-ag",
 }
 SENSITIVE_NAME = re.compile(
     r"password|passwd|secret|token|(?:^|_)sas(?:_|$)|"
@@ -154,6 +164,59 @@ def run_az(arguments, redactor):
     return result.returncode if result.returncode >= 0 else 128 - result.returncode
 
 
+def run_progress(settings, stage, redactor):
+    arguments = [
+        "vm", "run-command", "show",
+        "--resource-group", settings["AZURE_RESOURCE_GROUP"],
+        "--vm-name", settings["NAME_PREFIX"] + "-host",
+        "--name", COMMANDS[stage],
+        "--expand", "instanceView",
+        "--query", "{state:instanceView.executionState,start:instanceView.startTime,"
+                   "end:instanceView.endTime,output:instanceView.output,error:instanceView.error}",
+        "--output", "json",
+    ]
+    try:
+        result = subprocess.run(
+            ["az", *arguments], stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+    except OSError as error:
+        print(f"Unable to run Azure CLI ({type(error).__name__}).", file=sys.stderr)
+        return 1
+    sys.stderr.write(redactor.sanitize(result.stderr))
+    if result.returncode:
+        sys.stdout.write(redactor.sanitize(result.stdout))
+        return result.returncode
+    try:
+        progress = json.loads(result.stdout)
+    except (UnicodeError, json.JSONDecodeError):
+        print("Azure returned an unreadable progress response.", file=sys.stderr)
+        return 1
+    start = progress.get("start")
+    elapsed = "unknown"
+    if start:
+        try:
+            # Azure commonly emits seven fractional-second digits; Python 3.9
+            # accepts at most six.
+            normalized_start = re.sub(r"(\.\d{6})\d+(?=[+-]|Z|$)", r"\1", start)
+            started = datetime.fromisoformat(normalized_start.replace("Z", "+00:00"))
+            elapsed = str(datetime.now(timezone.utc) - started).split(".", 1)[0]
+        except (TypeError, ValueError):
+            pass
+    print(f"Stage={stage}")
+    print(f"ExecutionState={progress.get('state') or 'unknown'}")
+    print(f"StartUtc={start or 'unknown'}")
+    print(f"EndUtc={progress.get('end') or ''}")
+    print(f"Elapsed={elapsed}")
+    print("LatestOutput:")
+    output = progress.get("output") or "(no output reported yet)"
+    print(redactor.sanitize(output).rstrip())
+    if progress.get("error"):
+        print("LatestError:", file=sys.stderr)
+        print(redactor.sanitize(progress["error"]).rstrip(), file=sys.stderr)
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", required=True)
@@ -180,6 +243,8 @@ def main(argv=None):
     status = run_az(["account", "set", "--subscription", settings["AZURE_SUBSCRIPTION_ID"]], redactor)
     if status:
         return status
+    if args.progress:
+        return run_progress(settings, args.stage, redactor)
     return run_az([
         "vm", "run-command", "invoke",
         "--resource-group", settings["AZURE_RESOURCE_GROUP"],

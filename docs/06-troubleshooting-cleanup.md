@@ -22,11 +22,11 @@ For concise live progress while a stage is running:
 ./scripts/lab.sh stage-progress 40
 ```
 
-This reads logs retained on the host and displays transcript path,
-`LastWriteUtc`, size and the last 60 filtered lines. It does not require Blob
-Storage and does not start, resume or replace the stage. A stale last-write time
-is a reason to inspect the actual Azure Run Command and the reported wait—not
-automatic permission to retry.
+This reads the already-running Managed Run Command's Azure instance view:
+execution state, start/end, elapsed time and bounded latest output. It returns
+without launching another VM command, does not require Blob Storage, and does
+not start, resume or replace the stage. Missing/repeated output is a reason to
+inspect the reported wait—not automatic permission to retry.
 
 Read the latest host transcript for a stage:
 

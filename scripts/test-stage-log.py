@@ -111,8 +111,12 @@ class ViewerIntegrationTests(unittest.TestCase):
             "import json, os, sys\n"
             "with open(os.environ['FAKE_CALLS'], 'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
             "account = sys.argv[1:3] == ['account', 'set']\n"
+            "progress = sys.argv[1:4] == ['vm', 'run-command', 'show']\n"
             "code = int(os.environ.get('FAKE_ACCOUNT_EXIT' if account else 'FAKE_LOG_EXIT', '0'))\n"
-            "if not account or code:\n"
+            "if progress and not code:\n"
+            "    print(json.dumps({'state':'Running','start':'2026-09-16T15:22:41.8721341+00:00','end':None,\n"
+            "      'output':'2026-09-16T15:22:51Z [stage40] waiting fake-host-password','error':''}))\n"
+            "elif not account or code:\n"
             "    print('Host Application: powershell.exe -Password fake-unconfigured-old')\n"
             "    print('wrapped fake-old-value\\nProcess ID: 123\\n**********************')\n"
             "    print('diagnostic: fake-host-password fake-dsrm-password fake-sql-password fake-sas-signature')\n"
@@ -180,11 +184,14 @@ class ViewerIntegrationTests(unittest.TestCase):
         result = self.run_viewer("40", "stage-progress")
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
-        script = calls[1][calls[1].index("--scripts") + 1]
-        self.assertIn("40-create-nested-vms-*.log", script)
-        self.assertIn("Select-Object -Last 60", script)
-        self.assertIn("HostLog=", script)
-        self.assertIn("SizeBytes=", script)
+        self.assertEqual(calls[1][:3], ["vm", "run-command", "show"])
+        self.assertIn("stage40-nested-vms", calls[1])
+        self.assertNotIn("invoke", calls[1])
+        self.assertIn("ExecutionState=Running", result.stdout)
+        self.assertIn("Elapsed=", result.stdout)
+        self.assertNotIn("Elapsed=unknown", result.stdout)
+        self.assertIn("[stage40] waiting [REDACTED]", result.stdout)
+        self.assertNotIn("fake-host-password", result.stdout + result.stderr)
 
     def test_every_stage_has_timestamped_progress_or_worker_logging(self):
         direct = ("10-init-host.ps1", "20-host-network.ps1", "30-download-images.ps1",

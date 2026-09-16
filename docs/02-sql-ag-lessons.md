@@ -39,8 +39,9 @@ diagnostics.
 
 ## The intended build sequence
 
-Run one stage at a time; retain the previous stage's successful result before
-continuing.
+Use the saved dependency sequence, retaining successful prerequisite results
+before dependent work. `all` and the recovery entry point `20-30` overlap network
+configuration and image downloads, then join both before creating guests.
 
 | Stage | Responsibility and required outcome |
 |---|---|
@@ -70,7 +71,8 @@ SQL Setup runs synchronously inside a held guest session. Parallelism is
 between the three guests, never between installers on one guest. A retry
 verifies and retains healthy installations rather than blindly reinstalling
 them. The original successful installations were sequential; the later
-parallel implementation still needs a fresh end-to-end installation run.
+parallel implementation subsequently passed on three fresh guests during the
+clean-room recovery recorded in [the clean-room lessons](02-clean-room-lessons.md).
 
 ### Windows can be reachable while setup is unfinished
 
@@ -282,9 +284,11 @@ The current lab completed stages through `60`. A separate fresh generalized
 Windows Server 2022 Standard parent and untouched clone also completed OOBE
 and KMS activation without keyboard input, rename or a forced first-boot restart.
 
-A complete clean replay of all updated stages, including fresh parallel SQL
-installations, has not been performed. The documented Datacenter key mapping
-was not the live image used in that proof. Arc onboarding, assessment, migration
+A complete clean replay beginning with the updated stage `00` has not been
+performed. The clean-room recovery did prove fresh parallel SQL installations
+and the remaining stages through `60`, but reused foundation/host resources from
+the stopped attempt. The documented Datacenter key mapping was not the live
+image used in the separate image proof. Arc onboarding, assessment, migration
 compatibility and cutover remain separate learner exercises, not completed
 outcomes or additional automation hidden in stage `60`.
 

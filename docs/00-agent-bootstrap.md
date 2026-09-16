@@ -59,6 +59,16 @@ archival can remove ignored workspace files without stopping the Azure lab.
 Preserve secure configuration access for the next operator; never commit
 credentials to avoid this problem.
 
+If an existing lab's configuration was lost, first inspect Azure deployment and
+Managed Run Command states using the explicitly approved subscription, resource
+group and host. These read-only queries do not require the lab passwords. Ask
+for the approved durable file path without asking the user to paste secrets in
+chat. Do not copy another lab's configuration, retrieve passwords from raw
+transcripts, or generate a replacement host password and replay stage `10` as
+though it were the original. A lost host credential requires a separately
+authorized credential-recovery/reset procedure. Until configuration is restored,
+leave submitted operations and resources intact; the lab remains billable.
+
 For a second deployment, use a separately approved target and configuration.
 Do not silently reset or overwrite the existing practice lab.
 

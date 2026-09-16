@@ -314,9 +314,10 @@ The development lab completed stage `60` and its listener SQL check. Independent
 follow-up confirmed both cluster nodes and the witness online, one primary and
 one secondary, `JumpstartDB` synchronized and healthy on both replicas,
 `JumpstartStandaloneDB` online, and listener DNS/TCP reachability. The separate
-fresh stage `40` image proof also passed. A complete clean replay of every stage,
-including fresh parallel SQL installations, has not yet been performed; retain
-the per-stage gates on new deployments.
+fresh stage `40` image proof also passed. A later clean-room recovery completed
+fresh parallel SQL installations and stages through `60`, but reused the earlier
+foundation/host allocation. A complete replay beginning with the updated stage
+`00` has not yet been performed; retain the per-stage gates on new deployments.
 
 ## Verify the availability group
 

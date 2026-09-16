@@ -109,3 +109,106 @@ These remain recommendations, not implemented capabilities or reasons to
 claim the stopped run succeeded. Keep private environment files out of Git,
 restrict their permissions, and never publish raw credential-bearing
 transcripts as readiness evidence.
+
+## Fresh-agent recovery and completed stages `10`-`60`
+
+A new agent exercised baseline `ca0e89d9b9e59241952bf7a1724f9ae882d263d5`
+on 2026-09-16 using the repository runbooks. This was recovery of the existing
+test allocation, not authorization for another lab or a clean-from-zero replay.
+The approved target was `rg-arc-cleanroom-20260916`, host `jscr0916-host`, in
+`westus2`. The separate working lab was not read or changed.
+
+Initial read-only inspection found foundation and the original stage `10`
+execution terminal and successful, with no stages `20`-`60` submitted. The
+archived session's ignored configuration was gone, so the local wrapper restart
+gate could not immediately be replayed. After the user explicitly authorized
+recovery, the agent:
+
+- Generated replacement host, DSRM and SQL-service secrets without displaying
+  them, retained the documented nested-image credential, and created an
+  owner-only durable environment file outside the disposable worktree.
+- Used Azure's supported VM user update to reset only the existing test host's
+  `jumpstart` local administrator. It did not extract secrets from transcripts,
+  use another lab's configuration, change public access or rebuild resources.
+- Ran source validation and infrastructure preflight successfully.
+- Replayed the supported stage `10` wrapper to complete its restart/VM-agent
+  gate, then used `20-30`, followed by `40`, `45`, `50` and `60`. No duplicate
+  pipeline or competing Managed Run Command was launched.
+
+### Execution evidence
+
+Every new Managed Run Command was terminal with exit code `0`:
+
+| Command | UTC start | UTC end |
+|---|---|---|
+| `stage10-init-host` | `14:20:20` | `14:20:32` |
+| `stage30-images` | `14:21:54` | `14:23:28` |
+| `stage20-host-network` | `14:22:38` | `14:22:53` |
+| `stage40-nested-vms` | `14:24:41` | `14:36:04` |
+| `stage45-sql-install` | `14:37:38` | `14:52:59` |
+| `stage50-domain` | `14:54:18` | `15:09:30` |
+| `stage60-sql-ag` | `15:11:09` | `15:19:08` |
+
+The overlap is visible in the stage `30` and `20` timestamps. All numbered ARM
+deployments through `60` also reported `Succeeded`.
+
+### Ready-environment evidence
+
+| Area | Observed result |
+|---|---|
+| Guests | All five intended VMs were running. Each Windows guest completed native setup and reported successful Server Standard KMS activation. An independent host check found Ubuntu heartbeat `OK`, address `192.168.128.101` and TCP `22` reachable. |
+| SQL installation | The three parallel workers passed live verification for SQL Server 2025 Enterprise Developer, integrated sysadmin access, bundled `sqlcmd` 17 and native SQL WMI. |
+| Domain | `jumpstart.lab` promotion succeeded. ADWS, AD-integrated DNS and LDAP locator discovery passed; all four Windows computer objects were enabled, and each SQL member passed DC discovery. |
+| Cluster and quorum | Native cluster verification and the quorum operation completed with independently recorded local-process exit `0` evidence. Stage `60` requires both intended nodes and the configured witness online before succeeding. |
+| AG and database | `JS-AG-01` reported `JS-SQL-AG-01` primary and `JS-SQL-AG-02` secondary, both healthy. The saved gate required `JumpstartDB` to become synchronized and healthy on the local secondary before continuing and rejects suspended/offline AG resources. |
+| Listener | `ArcJumpstart-VerifyListener` completed with verified local-process exit `0` from `JS-SQL-01`. This gate checks `JS-AG-LSTN.jumpstart.lab`, expected IP `192.168.128.21`, TCP `1433` and an integrated-authentication query against `JumpstartDB`. |
+| Standalone sample | Stage `60` created or retained and verified `JumpstartStandaloneDB` online before listener verification. |
+| Learning boundary | No `Microsoft.HybridCompute`, `Microsoft.AzureArcData`, `Microsoft.OffAzure` or `Microsoft.Migrate` resources existed in the test resource group. Arc onboarding, collectors and migration were not performed. |
+
+This is strong evidence for the current stages `10`-`60`, including a fresh
+generalized Windows parent, untouched guests and the first fresh parallel SQL
+installation run. It is still not a complete clean-from-zero proof: stage `00`
+and the first host submission came from the stopped earlier attempt, including
+its legacy inline Bastion. The newer independent asynchronous Bastion path was
+not exercised or monitored in this recovery.
+
+### Implemented documentation corrections
+
+- The [bootstrap runbook](00-agent-bootstrap.md#inputs-to-obtain-once) now
+  describes safe missing-configuration inspection and the authorization boundary
+  for credential recovery.
+- The [AG build sequence](02-sql-ag-lessons.md#the-intended-build-sequence) no
+  longer says to run every stage serially, which contradicted `all` and the
+  supported `20-30` recovery overlap.
+
+### Operator experience and remaining recommendations
+
+1. **Preserve configuration continuity.** The missing durable `ENV_FILE` was the
+   only blocker requiring user action. `docs/00-agent-bootstrap.md` and
+   `scripts/README.md` should make choosing durable owner-only storage and
+   retaining a non-secret handoff reference part of initial deployment, not only
+   recovery advice.
+2. **Document the authorized host-credential recovery that was required.** Add
+   a bounded procedure to `docs/06-troubleshooting-cleanup.md` for an existing
+   host whose local administrator secret is lost. It must require the exact
+   target and reset approval, preserve the username and other resources, and
+   finish with the supported stage `10` replay. The successful manual reset in
+   this attempt should not remain knowledge available only in this report.
+3. **Persist a stage `10` wrapper completion receipt.** ARM and script success
+   did not prove that the interrupted wrapper performed its restart and agent
+   wait. A durable wrapper-level receipt would make that distinction
+   machine-readable.
+4. **Keep progress visibility bounded and redacted.** On this baseline,
+   `stage-log` safely returned a transcript tail but could itself take about a
+   minute and offered no host log metadata while quiet installers ran. Stage
+   `40` also displayed transient credential errors before successful first-boot
+   completion, which looked alarming without phase context. Main commit
+   `558d458` added timestamped phase messages and `lab.sh stage-progress`; it was
+   intentionally not merged during active stages, so this run did not exercise
+   that improvement. Future clean runs should verify it.
+
+No infrastructure source repair was needed during stages `10`-`60`. The
+remaining acceptance gap is one fresh approved invocation beginning at stage
+`00` on the corrected baseline, including asynchronous Bastion submission and
+the completed core pipeline. Resources remain allocated and billable until the
+user chooses to stop or remove them.

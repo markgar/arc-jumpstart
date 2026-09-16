@@ -200,12 +200,16 @@ not exercised or monitored in this recovery.
    machine-readable.
 4. **Keep progress visibility bounded and redacted.** On this baseline,
    `stage-log` safely returned a transcript tail but could itself take about a
-   minute and offered no host log metadata while quiet installers ran. Stage
-   `40` also displayed transient credential errors before successful first-boot
-   completion, which looked alarming without phase context. Main commit
-   `558d458` added timestamped phase messages and `lab.sh stage-progress`; it was
-   intentionally not merged during active stages, so this run did not exercise
-   that improvement. Future clean runs should verify it.
+   minute because its new Action Run Command queued behind the active stage.
+   Stage `40` also displayed transient credential errors before successful
+   first-boot completion, which looked alarming without phase context. Main
+   commits `558d458` and `95ae18c` added timestamped phase messages and changed
+   `lab.sh stage-progress` to read the active Managed Run Command's existing
+   instance view instead of entering the busy VM channel. A subsequent fresh
+   build returned stage `10` disk/feature phases and live stage `30` file,
+   percentage and throughput immediately. Continue exercising it through the
+   guest, SQL, domain and AG stages; use `stage-log` only for the longer
+   terminal-stage transcript view.
 
 No infrastructure source repair was needed during stages `10`-`60`. The
 remaining acceptance gap is one fresh approved invocation beginning at stage

@@ -40,6 +40,12 @@ the next build.
 
 4. Monitor real execution through completion. The numbered stages are resumable
    checkpoints for the agent, not a sequence of manual learner assignments.
+   Bastion is enabled by default and submitted independently after stage `00`.
+   Let Azure finish it without polling or a completion gate. Never make a build
+   stage or core-readiness handoff wait for it.
+   Prefer saved parallel paths: `all` overlaps `20`/`30`; `deploy.sh 20-30`
+   provides the same overlap during recovery. Do not serialize independent
+   work, but do not remove the readiness joins before dependent stages.
 5. On failure, inspect the first failing gate and use the documented recovery
    boundary. Save necessary fixes in the relevant Bicep/PowerShell source and
    regression tests before retrying the affected stage.

@@ -4,10 +4,15 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 env_file="${ENV_FILE:-$repo_root/deploy.env}"
 temporary_files=()
+images_submitted=false
+image_previous_run_start_time=''
 
 cleanup() {
   if (( ${#temporary_files[@]} > 0 )); then
     rm -f "${temporary_files[@]}"
+  fi
+  if [[ "$images_submitted" == true ]]; then
+    echo "Stage 30 was submitted independently and may outlive this wrapper. Inspect stage30-images before retrying; do not start a competing download." >&2
   fi
 }
 trap cleanup EXIT
@@ -53,17 +58,22 @@ load_env_file() {
 
 load_env_file
 
+requested_stage="${1:-}"
 required_values=(
   AZURE_SUBSCRIPTION_ID
   AZURE_LOCATION
   AZURE_RESOURCE_GROUP
   NAME_PREFIX
-  HOST_ADMIN_USERNAME
-  HOST_ADMIN_PASSWORD
-  NESTED_WINDOWS_PASSWORD
-  SAFE_MODE_PASSWORD
-  SQL_SERVICE_ACCOUNT_PASSWORD
 )
+if [[ "$requested_stage" != bastion ]]; then
+  required_values+=(
+    HOST_ADMIN_USERNAME
+    HOST_ADMIN_PASSWORD
+    NESTED_WINDOWS_PASSWORD
+    SAFE_MODE_PASSWORD
+    SQL_SERVICE_ACCOUNT_PASSWORD
+  )
+fi
 
 for variable_name in "${required_values[@]}"; do
   if [[ -z "${!variable_name:-}" || "${!variable_name}" == "CHANGEME" ]]; then
@@ -72,10 +82,11 @@ for variable_name in "${required_values[@]}"; do
   fi
 done
 
-PASSWORD_HOST="$HOST_ADMIN_PASSWORD" \
-PASSWORD_DSRM="$SAFE_MODE_PASSWORD" \
-PASSWORD_SQL_SERVICE="$SQL_SERVICE_ACCOUNT_PASSWORD" \
-python3 - <<'PY'
+if [[ "$requested_stage" != bastion ]]; then
+  PASSWORD_HOST="$HOST_ADMIN_PASSWORD" \
+  PASSWORD_DSRM="$SAFE_MODE_PASSWORD" \
+  PASSWORD_SQL_SERVICE="$SQL_SERVICE_ACCOUNT_PASSWORD" \
+  python3 - <<'PY'
 import os
 import string
 import sys
@@ -95,19 +106,29 @@ for name, value in {
         print(f"{name} must be at least 8 characters and use at least three character classes.", file=sys.stderr)
         sys.exit(1)
 PY
+fi
 
-requested_stage="${1:-}"
 if [[ -z "$requested_stage" ]]; then
-  echo "Usage: scripts/deploy.sh <00|10|20|30|40|45|50|60|all>" >&2
+  echo "Usage: scripts/deploy.sh <00|10|20|30|40|45|50|60|20-30|all|bastion>" >&2
   exit 1
 fi
 
 stages=(00 10 20 30 40 45 50 60)
 case "$requested_stage" in
   00|10|20|30|40|45|50|60) stages=("$requested_stage") ;;
+  20-30) stages=(20 30) ;;
   all) ;;
+  bastion) stages=() ;;
   *)
     echo "Unknown stage: $requested_stage" >&2
+    exit 1
+    ;;
+esac
+
+case "${DEPLOY_BASTION:-true}" in
+  true|false) ;;
+  *)
+    echo "DEPLOY_BASTION must be true or false." >&2
     exit 1
     ;;
 esac
@@ -213,7 +234,7 @@ require_foundation_core() {
     --name "${NAME_PREFIX}-vnet" \
     --query provisioningState \
     --output tsv 2>/dev/null || true)" != "Succeeded" ]]; then
-    echo "The foundation virtual network must complete before stage 10 can run." >&2
+    echo "The foundation virtual network must complete before this deployment can run." >&2
     exit 1
   fi
 }
@@ -420,12 +441,23 @@ deploy_foundation() {
     --parameters \
       location="$AZURE_LOCATION" \
       namePrefix="$NAME_PREFIX" \
-      deployBastion="${DEPLOY_BASTION:-true}" \
     --output table
+}
+
+deploy_bastion() {
+  echo "==> Optional Bastion: submitting independently (not waiting for provisioning)"
+  az deployment group create \
+    --name arc-jumpstart-bastion \
+    --resource-group "$AZURE_RESOURCE_GROUP" \
+    --template-file "$repo_root/infra/stages/bastion/main.bicep" \
+    --parameters location="$AZURE_LOCATION" namePrefix="$NAME_PREFIX" \
+    --no-wait \
+    --output none
 }
 
 deploy_script_stage() {
   local stage="$1"
+  local completion_mode="${2:-wait}"
   local stage_directory
   local script_file
   stage_directory="$(stage_directory "$stage")"
@@ -472,16 +504,51 @@ deploy_script_stage() {
       --output none
     wait_for_vm_agent "${NAME_PREFIX}-host"
   elif [[ "$stage" == "30" || "$stage" == "45" ]]; then
-    echo "Waiting for the stage $stage Run Command to complete..."
-    wait_for_run_command "$(stage_command "$stage")" "$previous_run_start_time"
+    if [[ "$stage" == "30" && "$completion_mode" == defer ]]; then
+      image_previous_run_start_time="$previous_run_start_time"
+      images_submitted=true
+      echo "Image downloads are running independently; configuring the nested network while they continue."
+    else
+      echo "Waiting for the stage $stage Run Command to complete..."
+      wait_for_run_command "$(stage_command "$stage")" "$previous_run_start_time"
+    fi
   fi
 }
+
+bastion_notice=''
+if [[ "$requested_stage" == bastion ]]; then
+  require_foundation_core
+  deploy_bastion
+  echo "Bastion request accepted. Azure will continue provisioning it; no monitoring or wait is required by the build."
+  exit 0
+fi
 
 for stage in "${stages[@]}"; do
   if [[ "$stage" == "00" ]]; then
     deploy_foundation
+    if [[ "${DEPLOY_BASTION:-true}" == true ]]; then
+      if deploy_bastion; then
+        bastion_notice="Bastion submitted to Azure independently. The build does not monitor or wait for it."
+      else
+        bastion_notice="WARNING: Optional Bastion submission failed; the lab build continues without it. Inspect the Azure error above and retry separately: ./scripts/deploy.sh bastion"
+        echo "$bastion_notice" >&2
+      fi
+    fi
+  elif [[ "$stage" == "20" && ("$requested_stage" == all || "$requested_stage" == 20-30) ]]; then
+    require_predecessors 30
+    deploy_script_stage 30 defer
+    require_predecessors 20
+    deploy_script_stage 20
+  elif [[ "$stage" == "30" && "$images_submitted" == true ]]; then
+    echo "Joining the image download started alongside stage 20..."
+    wait_for_run_command stage30-images "$image_previous_run_start_time"
+    images_submitted=false
   else
     require_predecessors "$stage"
     deploy_script_stage "$stage"
   fi
 done
+
+if [[ -n "$bastion_notice" ]]; then
+  echo "$bastion_notice"
+fi

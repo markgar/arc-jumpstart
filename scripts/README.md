@@ -16,6 +16,8 @@ inputs and required ready-environment outcome.
 | `./scripts/preflight.sh full` | Also checks registrations for the later Arc/assessment/migration exercises. Does not perform those exercises. |
 | `./scripts/deploy.sh all` | Runs the complete saved infrastructure sequence through stage `60`. Intended for a new lab, not blanket repair of an existing domain. |
 | `./scripts/deploy.sh 60` | Runs one supported stage. Other numbers are `00`, `10`, `20`, `30`, `40`, `45` and `50`. Use for scoped recovery and then continue with successors. |
+| `./scripts/deploy.sh 20-30` | Starts image downloads and configures the independent host network while they run, then requires successful download completion. Requires a ready stage `10` host; do not use while either earlier operation is active. |
+| `./scripts/deploy.sh bastion` | Submits only the independent Bastion deployment with `--no-wait`, against an existing foundation network. Explicitly requests Bastion even when `DEPLOY_BASTION=false`; requires only the four Azure target settings, not guest credentials. Does not verify readiness. |
 | `./scripts/lab.sh status` | Reports outer host power state only; not whole-lab readiness. |
 | `./scripts/lab.sh stage-log 60` | Displays the latest stage transcript through `show-stage-log.py`, suppressing startup headers and redacting configured sensitive values. Raw host files remain sensitive. |
 | `./scripts/lab.sh stop` / `start` | Deallocates or starts the outer Azure host. Deallocation does not stop storage/Bastion charges; keep the host allocated during replication/migration. |
@@ -37,6 +39,16 @@ Azure CLI and Python 3 are required. The wrapper currently rejects service
 principal authentication. Authentication, permissions and the cost envelope
 must be supplied/approved before provisioning.
 
+Bastion is enabled by default. `all` and `00` submit it independently after the
+core network deployment completes, then return to the numbered sequence without
+waiting for access readiness. Setting `DEPLOY_BASTION=false` omits that request.
+Resuming stages `10`-`60` never submits, polls or waits for Bastion. An optional
+submission error is printed as a warning without failing the core sequence;
+`deploy.sh bastion` used on its own returns a failed submission's nonzero exit
+status. After Azure accepts the request, the build does not monitor it.
+Azure retains any later provisioning errors in the independent deployment;
+they are not reflected in the exit code of a successful submission.
+
 The wrappers do not source `deploy.env` as shell code. Use literal `KEY=value`
 lines without quotes or `export`. Do not print the file or put it in version
 control.
@@ -56,9 +68,12 @@ group does not describe the build being monitored.
 ## Completion and recovery
 
 `deploy.sh` enforces stage predecessors. Stage `10` includes a host restart and
-agent wait. Stages `30` and `45` wait for the new asynchronous Run Command
-execution and require exit `0`; do not return success to the learner when only
-submission succeeded.
+agent wait. `all` and `20-30` submit the image Run Command before configuring
+the independent internal network, then join the fresh image execution before
+proceeding. Individual `30` and stage `45` still wait for their new asynchronous
+Run Command and require exit `0`; do not return core-stage success when only
+submission succeeded. If the wrapper stops while images are outstanding, Azure
+may continue downloading; inspect the command before retrying.
 
 Use the stage number that failed, not a second `all` invocation, to resume.
 For example:
@@ -78,7 +93,8 @@ and [cleanup guide](../docs/06-troubleshooting-cleanup.md).
 
 ## Regression coverage
 
-`validate.sh` invokes `test-check-sql-media.py`, `test-stage-log.py`, and, when
+`validate.sh` invokes `test-check-sql-media.py`, `test-stage-log.py`,
+`test-bastion.py`, and, when
 PowerShell is available, `test-stage40.ps1`, `test-stage45.ps1`,
 `test-stage50.ps1` and `test-stage60.ps1`.
 
@@ -86,3 +102,13 @@ Preserve coverage for generated command arguments, real native report formats,
 SQL type conversion/startup transitions, parallel installer boundaries,
 disk-parent safety and log redaction. These tests do not replace the clean
 deployment and live readiness acceptance described in the agent runbook.
+
+The Bastion tests compile the actual Bicep resource graphs and execute the
+wrappers against a fake Azure CLI. They cover default-enabled asynchronous
+submission, disabled/on-demand access, independent failure reporting and a
+complete core sequence while Bastion remains running or fails. They do not
+create Azure resources or prove live provisioning.
+
+They also verify that image submission precedes network configuration, image
+completion is joined before guest creation, and failure of either prerequisite
+prevents stage `40`.

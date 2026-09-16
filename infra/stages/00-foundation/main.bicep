@@ -1,4 +1,4 @@
-metadata description = 'Stage 00 - landing zone foundation: virtual network, NSG, and optional Bastion.'
+metadata description = 'Stage 00 - landing zone foundation: virtual network and NSG. Bastion is deployed separately.'
 
 targetScope = 'resourceGroup'
 
@@ -19,9 +19,6 @@ param vnetAddressPrefix string = '10.20.0.0/16'
 param hostSubnetPrefix string = '10.20.1.0/24'
 param bastionSubnetPrefix string = '10.20.250.0/26'
 
-@description('Deploy Azure Bastion so you can RDP to the Hyper-V host from the portal.')
-param deployBastion bool = true
-
 module network '../../modules/network.bicep' = {
   name: 'foundation-network'
   params: {
@@ -31,7 +28,6 @@ module network '../../modules/network.bicep' = {
     vnetAddressPrefix: vnetAddressPrefix
     hostSubnetPrefix: hostSubnetPrefix
     bastionSubnetPrefix: bastionSubnetPrefix
-    deployBastion: deployBastion
   }
 }
 

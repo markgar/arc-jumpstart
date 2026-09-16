@@ -12,7 +12,8 @@ group before deploying them.
 
 | Stage entry point | Host artifact / responsibility |
 |---|---|
-| [00-foundation](stages/00-foundation/main.bicep) | VNet, host subnet, NSG and optional Bastion through `modules/network.bicep`. |
+| [00-foundation](stages/00-foundation/main.bicep) | VNet, host subnet, NSG and reserved `AzureBastionSubnet` through `modules/network.bicep`. No Bastion host or public IP. |
+| [bastion](stages/bastion/main.bicep) | Independent Basic Bastion and Standard public IP against the existing access subnet. Enabled by default, submitted without waiting after `00`; not a numbered-stage dependency. |
 | [10-hyperv-host](stages/10-hyperv-host/main.bicep) | Azure VM, NIC and persistent data disk; [`10-init-host.ps1`](../artifacts/scripts/10-init-host.ps1) prepares the host. |
 | [20-host-network](stages/20-host-network/main.bicep) | [`20-host-network.ps1`](../artifacts/scripts/20-host-network.ps1): nested switch, NAT and DHCP. |
 | [30-images](stages/30-images/main.bicep) | [`30-download-images.ps1`](../artifacts/scripts/30-download-images.ps1): Windows/Linux image cache. |
@@ -40,6 +41,23 @@ execution, so the wrapper additionally waits for a fresh terminal script result.
 Do not confuse an Azure resource write with guest readiness. Windows setup,
 domain discovery, SQL queries, native cluster validation, operation receipts and
 listener access supply the corresponding gates.
+
+In `all`, stage `30` is submitted after the host restart/agent gate, then stage
+`20` configures only the internal switch/NAT/DHCP while image downloads continue
+on the outer host. These use distinct
+[Managed Run Commands](https://learn.microsoft.com/en-us/azure/virtual-machines/windows/run-command-managed),
+which support parallel scripts. The wrapper joins the new image execution and
+checks both predecessors before `40`. It does not use concurrent Action Run
+Commands or a local detached process. Stage `40` starts all clones before
+waiting for individual Windows setup and overlaps their rename reboots.
+
+Bastion is not one of those gates. The wrapper uses Azure deployment
+`arc-jumpstart-bastion` with `--no-wait`, not a local background shell or a
+deployment nested inside stage `00`. Azure continues provisioning it after the
+submission command returns. Its template references the VNet/subnet as
+`existing` resources and does not rewrite the shared VNet while the host is
+being created. Submission/provisioning failures are an independently reported
+access problem, never a prerequisite for stages `10`-`60`.
 
 ## Persistence and topology
 

@@ -1,5 +1,19 @@
 # Troubleshooting and cleanup
 
+## Bastion is slow or failed
+
+Bastion is enabled by default but is independent of the lab build. Its
+provisioning must not block any numbered stage or core-readiness check.
+Let Azure finish the request without monitoring it during the build. If you
+later need to troubleshoot access, inspect `arc-jumpstart-bastion` in Azure.
+A submission warning or failed access deployment can be repaired independently:
+retry only `./scripts/deploy.sh bastion` after the previous request is terminal.
+Do not recreate healthy infrastructure to repair browser access.
+
+Builds started before this separation still use their submitted stage `00`
+template. See [independent Bastion access](02-deploy.md#independent-bastion-access)
+for that boundary and the standalone commands.
+
 ## Read stage logs
 
 Read the latest host transcript for a stage:

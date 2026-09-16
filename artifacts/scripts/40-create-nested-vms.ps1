@@ -701,7 +701,9 @@ try {
             -ParentVhd $definition.Parent `
             -MemoryGB $definition.Memory `
             -Linux:$definition.Linux
+    }
 
+    foreach ($definition in $definitions) {
         if (-not $definition.Linux) {
             Wait-VMHeartbeat -VMName $definition.Name
             Wait-WindowsGuestOobe -VMName $definition.Name
@@ -721,14 +723,12 @@ try {
 
             if ($restartNeeded) {
                 Restart-VM -Name $definition.Name -Force
-                Wait-VMHeartbeat -VMName $definition.Name
             }
         }
     }
 
-    Disable-VMIntegrationService -VMName 'JS-DC-01' -Name 'Time Synchronization'
-
     $machineSids = foreach ($name in @('JS-DC-01', 'JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02')) {
+        Wait-VMHeartbeat -VMName $name
         $machineSid = Invoke-WindowsGuest -VMName $name -ScriptBlock {
             ((Get-LocalUser -Name Administrator).SID.Value -replace '-500$', '')
         }
@@ -743,6 +743,7 @@ try {
         throw "The source VHDX produced duplicate Windows machine SIDs ($details). The image cannot be safely cloned for this lab; use generalized replacement images."
     }
 
+    Disable-VMIntegrationService -VMName 'JS-DC-01' -Name 'Time Synchronization'
     Invoke-WindowsGuest -VMName 'JS-DC-01' -ArgumentList $DcStaticIp, $NestedGatewayIp -ScriptBlock {
         param($Address, $Gateway)
         $adapter = Get-NetAdapter | Where-Object Status -eq 'Up' | Select-Object -First 1

@@ -24,7 +24,8 @@ Read [prerequisites](01-prerequisites.md) and `deploy.env.example`. Obtain:
 - The approved subscription, region, dedicated resource group and name prefix.
 - Azure CLI user authentication and the permissions/provider registrations
   required by the prerequisites.
-- Approved host size, quota/cost envelope and whether Bastion is wanted.
+- Approved host size and quota/cost envelope, including default-enabled Bastion.
+  Keep Bastion enabled unless the user asks to omit it; it is not a build gate.
 - Host, nested-image, DSRM and SQL-service credentials through a secure channel.
   The nested-image password must match the chosen source image.
 - Any approved image/media overrides; use the documented defaults otherwise.
@@ -33,6 +34,11 @@ The wrappers currently require an Azure CLI **user** identity. Do not imply
 that service-principal-based unattended authentication has been implemented.
 Missing credentials, permissions, quota or approval are real prerequisites,
 not reasons to bypass safeguards.
+
+Once those inputs are approved, use documented defaults and proceed without
+repeated routine confirmation questions. See the
+[first clean-room attempt](02-clean-room-lessons.md) for observed region/quota,
+Bastion and interrupted-run lessons, and recommendations not yet implemented.
 
 Create the ignored configuration file only if it does not already exist:
 
@@ -46,6 +52,12 @@ Populate it without displaying secret values. It contains literal `KEY=value`
 data, not shell code: do not `source` it, add `export`, or surround values with
 shell quotes. An alternative private file can be selected with `ENV_FILE`;
 use the same file consistently for all wrappers. See the [script reference](../scripts/README.md).
+
+For disposable worktree sessions, keep that private `ENV_FILE` in approved
+durable storage outside the worktree with owner-only permissions. Session
+archival can remove ignored workspace files without stopping the Azure lab.
+Preserve secure configuration access for the next operator; never commit
+credentials to avoid this problem.
 
 For a second deployment, use a separately approved target and configuration.
 Do not silently reset or overwrite the existing practice lab.
@@ -63,15 +75,31 @@ From the repository root, after configuration and Azure authentication:
 The `&&` chain prevents deployment after failed source validation or preflight.
 The deployment wrapper does not itself invoke those two entry points.
 
-`all` runs `00`, `10`, `20`, `30`, `40`, `45`, `50` and `60` in order. It uses
-Bicep, embeds the saved PowerShell artifacts, handles the stage `10` host
-restart, and waits for the asynchronous image/SQL stages. Do not replace this
-with a private sequence of portal edits or one-off scripts.
+`all` follows the dependency graph: `00` -> `10` -> overlapping `20`/`30` ->
+`40` -> `45` -> `50` -> `60`. It uses Bicep, embeds the saved PowerShell
+artifacts, handles the stage `10` host restart, and requires successful image
+and network completion before `40`. Do not replace this with a private
+sequence of portal edits or one-off scripts.
+
+Bastion is a separate Azure deployment, submitted with `--no-wait` after the
+foundation network succeeds. It runs alongside stages `10`-`60`; none of those
+stages, nor core-lab completion, waits for its provisioning or success.
+The reserved `AzureBastionSubnet` has no Bastion service charge by itself.
+Submission errors are reported without stopping the core build. After a
+successful submission, let Azure finish it: no monitoring, polling or completion
+join is needed. An accepted request is not a claim that browser access is
+already available. If access ever needs repair, use the independent deployment
+instead of replaying infrastructure stages.
 
 Monitor execution rather than asking the learner to perform routine setup
 between stages. Stage `30` downloads approximately 38 GiB of images; stage `45`
 downloads SQL media once and installs on three guests in parallel. A quiet
 terminal is not proof of a hang, and a running VM is not proof that SQL is ready.
+
+For a stopped build whose host is ready but `20`/`30` have not been submitted,
+use `./scripts/deploy.sh 20-30` to retain their overlap rather than running two
+serial commands. If either operation is already active, inspect it and use the
+appropriate individual recovery boundary; do not launch a competing pair.
 
 Use the [infrastructure map](../infra/README.md) for the stage-to-script mapping
 and the [deployment guide](02-deploy.md) for implementation details.
@@ -99,6 +127,15 @@ Do not restart `all` merely to resume stage `50` or `60`: that would also revisi
 the workgroup-oriented stage `40`. Do not relabel old generalized-parent
 markers, mutate shared parent disks, drop conflicting databases or delete
 active-operation evidence.
+
+Stopping the local terminal does not cancel an Azure deployment or Managed Run
+Command that was already submitted. Inspect their real states before resuming.
+In particular, stage `10` performs its host restart and VM-agent wait in the
+local wrapper **after** the cloud deployment returns. If that wrapper was
+interrupted, ARM success alone does not prove those steps happened. Wait for the
+previous cloud deployment and Run Command to become terminal, then rerun the
+supported stage `10` wrapper to finish its restart/readiness gate before `20`.
+Do not create a competing stage `10` execution while the old one is running.
 
 Readiness failures should be resolved by the agent within the user's approved
 scope. Ask for a decision when credentials/permissions are unavailable or a

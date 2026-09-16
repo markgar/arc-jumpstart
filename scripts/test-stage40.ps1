@@ -488,4 +488,59 @@ if ($source.Contains("Get-VM -Name 'JS-*'") -or $source.Contains('Rebuilding $Na
 }
 if (-not $source.Contains('$unattend = New-WindowsServer2022Unattend -AdministratorPassword $AdministratorPassword') -or
     -not $source.Contains("Version = 'windows-server-2022-gvlk-v1'")) { throw 'Template generation must use the new answer file and versioned completion marker.' }
+& {
+    $loops = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.ForEachStatementAst] -and
+            $node.Variable.VariablePath.UserPath -eq 'definition'
+    }, $true))
+    if ($loops.Count -ne 2) { throw 'Starting all guests and checking readiness must use separate phases.' }
+    $definitions = @(
+        @{ Name = 'dc'; Parent = 'windows'; Memory = 4; Linux = $false },
+        @{ Name = 'sql1'; Parent = 'windows'; Memory = 8; Linux = $false },
+        @{ Name = 'sql2'; Parent = 'windows'; Memory = 8; Linux = $false },
+        @{ Name = 'sql3'; Parent = 'windows'; Memory = 8; Linux = $false },
+        @{ Name = 'linux'; Parent = 'linux'; Memory = 4; Linux = $true }
+    )
+    $script:bootEvents = [Collections.Generic.List[string]]::new()
+    function New-NestedVM {
+        param($Name, $ParentVhd, $MemoryGB, [switch]$Linux)
+        $script:bootEvents.Add("start:$Name")
+    }
+    function Wait-VMHeartbeat {
+        param($VMName)
+        if (@($script:bootEvents | Where-Object { $_ -like 'start:*' }).Count -ne 5) {
+            throw 'No guest readiness wait may precede starting all guests.'
+        }
+        $script:bootEvents.Add("heartbeat:$VMName")
+    }
+    function Wait-WindowsGuestOobe {
+        param($VMName)
+        $script:bootEvents.Add("oobe:$VMName")
+    }
+    function Get-WindowsProvisioningHelperScript { 'mock-helper' }
+    function Invoke-WindowsGuest {
+        param($VMName, $ArgumentList, $ScriptBlock)
+        if ("oobe:$VMName" -notin $script:bootEvents) { throw 'Native OOBE remains mandatory before activation or rename.' }
+        if ($ScriptBlock.ToString() -like '*Rename-Computer*') { return $true }
+    }
+    function Restart-VM {
+        param($Name, [switch]$Force)
+        $script:bootEvents.Add("restart:$Name")
+    }
+    & ([scriptblock]::Create($loops[0].Extent.Text))
+    & ([scriptblock]::Create($loops[1].Extent.Text))
+    if (@($script:bootEvents | Where-Object { $_ -like 'restart:*' }).Count -ne 4) {
+        throw 'Every renamed Windows guest must still be restarted.'
+    }
+    $sidLoop = $ast.Find({
+        param($node)
+        $node -is [Management.Automation.Language.ForEachStatementAst] -and
+            $node.Extent.Text.Contains('MachineSid = $machineSid')
+    }, $true)
+    if (-not $sidLoop -or -not $sidLoop.Extent.Text.Contains('Wait-VMHeartbeat -VMName $name') -or
+        $sidLoop.Extent.StartOffset -lt $loops[1].Extent.EndOffset) {
+        throw 'Post-reboot readiness and SID checks must follow initiation of all guest rename/reboots.'
+    }
+}
 Write-Host 'Stage 40 regression checks passed.'

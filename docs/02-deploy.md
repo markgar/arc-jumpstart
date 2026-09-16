@@ -32,8 +32,7 @@ learner to construct the environment manually.
 ```bash
 ./scripts/deploy.sh 00
 ./scripts/deploy.sh 10
-./scripts/deploy.sh 20
-./scripts/deploy.sh 30
+./scripts/deploy.sh 20-30
 ./scripts/deploy.sh 40
 ./scripts/deploy.sh 45
 ./scripts/deploy.sh 50
@@ -63,7 +62,23 @@ Each PowerShell stage runs through Azure VM Run Command. Azure retains recent co
 
 Stage `30` downloads approximately 38 GiB of Windows and Ubuntu images. Source throttling and regional network conditions affect download time. Azure does not send the operator a separate completion notification. Keep the `./scripts/deploy.sh 30` terminal open and wait for it to return successfully before starting stage `40`.
 
-When Bastion is enabled, its provisioning can continue after the core stage `00` virtual network is ready. Stage `10` checks the required VNet directly, so optional interactive access does not block creation of the Hyper-V host.
+`all` and `20-30` start those image downloads before configuring the independent
+internal network, then join image completion before creating guests. Individual
+`20` and `30` remain available for scoped recovery. Failure of either prevents
+stage `40`; a failed/interrupted wrapper can leave a cloud image download running,
+so inspect it before any retry.
+
+Stage `40` prepares the generalized parent once, then starts every clone before
+waiting for individual Windows first-boot completion. Rename reboots overlap as
+well; final heartbeat/SID checks and DC configuration still wait for the Windows
+guests to be ready. OOBE and activation are never bypassed to gain concurrency.
+
+Stage `00` deploys only the core network, including a reserved
+`AzureBastionSubnet`. Bastion is enabled by default but submitted separately as
+`arc-jumpstart-bastion` with `--no-wait` immediately afterward. The wrapper then
+continues to stage `10`; nothing in stages `10`-`60` or final core readiness
+depends on Bastion. Even a rejected Bastion submission is reported separately
+and does not stop the core build. Set `DEPLOY_BASTION=false` to omit that request.
 
 Stage `40` prepares a local generalized Windows parent before cloning all four Windows guests. In each temporary template, it removes a removable, unprovisioned Administrator Edge AppX registration when a newer Edge version is provisioned, or when the registration is the known source-image version `120.0.2210.61`. Fresh source images can have that old registration without any provisioned Edge replacement; cleanup does not depend on waiting for an Edge update. It preserves all provisioned versions and other applications, and fails explicitly if an unprovisioned registration remains under another user or cannot be safely removed. This addresses Sysprep error `0x80073cf2` seen in the source images without requiring manual package cleanup.
 
@@ -169,11 +184,39 @@ python3 scripts/check-sql-media.py \
 
 The command downloads the entire file, rejects incomplete or non-ISO content, and verifies the checksum before publishing the output file. It does not prove Windows setup, SQL edition, or login readiness; stage `45` checks those on the guests. A full local download was verified in about 19 seconds during live development, but this is not a network performance guarantee.
 
-Do not start the next stage until the current deployment reports success. If a stage fails, run `./scripts/lab.sh stage-log <stage>`, correct the cause in the repository, and rerun only that number.
+Do not start the next numbered stage until its required predecessor reports success. Bastion is not a predecessor. If a host-script stage fails, run `./scripts/lab.sh stage-log <stage>`, correct the cause in the repository, and rerun only that number.
+
+## Independent Bastion access
+
+The default build submits Bastion after the network is ready and lets Azure
+finish it. There is no monitoring loop, status gate or completion join, including
+at the end of the core build. An accepted request is not a claim that browser
+access is already available. Azure retains deployment state/errors if you later
+need to troubleshoot access; there is no reason to inspect them during a normal
+infrastructure build.
+
+If access was omitted or its independent deployment failed, submit/retry it
+without touching the working host or guests:
+
+```bash
+./scripts/deploy.sh bastion
+```
+
+This explicitly requests Bastion regardless of `DEPLOY_BASTION`, and returns
+after Azure accepts the request, not after provisioning finishes. Do not
+resubmit while its earlier deployment is active. Failed access must be
+investigated separately; it is not a reason to rebuild healthy infrastructure.
+
+Older builds deployed Bastion inside stage `00`. Already-running deployments
+retain their submitted template; updating this repo does not remove their old
+wait. Do not start a second competing `all` invocation. New submissions use
+`arc-jumpstart-bastion`, not the old nested deployment. Older labs created
+with Bastion disabled may need a scoped stage `00` network update to reserve
+the access subnet before adding Bastion; do not rerun `all` for this.
 
 ## Connect to the host
 
-With Bastion enabled:
+With Bastion enabled and its separate deployment succeeded:
 
 1. Open the `${NAME_PREFIX}-host` VM in the Azure portal.
 2. Select **Connect > Bastion**.

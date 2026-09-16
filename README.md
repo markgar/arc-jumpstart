@@ -43,7 +43,7 @@ Stage `40` verifies completed Windows first-boot setup, Azure KMS activation and
 
 | Stage | Purpose | Safe to rerun |
 |---|---|---|
-| `00` | Resource group foundation, VNet, NSG, and optional Bastion | Yes |
+| `00` | Resource group foundation, VNet, NSG, and reserved access subnet | Yes |
 | `10` | Hyper-V host VM, data disk, Hyper-V and DHCP roles | Yes |
 | `20` | Internal switch, NAT and DHCP scope | Yes |
 | `30` | Download the Windows and Ubuntu VHDX base images | Yes; existing files are skipped |
@@ -53,6 +53,12 @@ Stage `40` verifies completed Windows first-boot setup, Azure KMS activation and
 | `60` | Build WSFC, file-share witness, sample database, AOAG and listener | Yes |
 
 Stages `00`-`60` prepare the lab. Azure Arc onboarding, assessment, and migration are deliberately guided exercises rather than automated scripts.
+
+Bastion is enabled by default, but deployed separately with no build dependency.
+After stage `00`, the wrapper submits Bastion without waiting, then runs stages
+`10`-`60`. Nothing in the build waits for Bastion, including final completion.
+Azure finishes Bastion independently; the build does not monitor it.
+Set `DEPLOY_BASTION=false` only if you want to omit it.
 
 ## Quick start
 
@@ -72,6 +78,12 @@ For a new lab, `all` is the normal path. Numbered stages are agent debugging and
 recovery checkpoints, not manual learner assignments. Resume only the affected
 stage and its successors; do not rerun `all` against a promoted domain simply
 to retry a later failure.
+
+The build overlaps independent work: Bastion runs beside the host pipeline;
+image downloads run while the nested network is configured; all nested guests
+start before per-guest Windows readiness checks; and SQL installs run on the
+three guests in parallel. Stage `40` still requires both networking and images
+to succeed, and domain/cluster readiness gates remain mandatory.
 Use `./scripts/lab.sh status`, `stop`, and `start` for lifecycle operations; it reads only the non-secret Azure identifiers it needs from `deploy.env`.
 
 The development lab and a separate fresh Windows-template proof succeeded.
@@ -84,6 +96,7 @@ Stage `30` downloads about 38 GiB directly on the host. Stage `45` separately do
 Continue with:
 
 - [Agent bootstrap and ready-environment contract](docs/00-agent-bootstrap.md)
+- [First clean-room attempt: findings and remaining gaps](docs/02-clean-room-lessons.md)
 - [Prerequisites and cost considerations](docs/01-prerequisites.md)
 - [Deploy and inspect the lab](docs/02-deploy.md)
 - [Understand and troubleshoot the automated domain controller](docs/02-domain-controller.md)

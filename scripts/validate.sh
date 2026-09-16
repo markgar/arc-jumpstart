@@ -21,6 +21,7 @@ for script in scripts/*.sh; do
 done
 python3 scripts/test-check-sql-media.py
 python3 scripts/test-stage-log.py
+python3 scripts/test-bastion.py
 
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck scripts/*.sh

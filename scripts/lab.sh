@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+env_file="${ENV_FILE:-$repo_root/deploy.env}"
+
+if [[ "${1:-}" == stage-log ]]; then
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 is required for safe stage-log display." >&2
+    exit 1
+  fi
+  exec python3 "$repo_root/scripts/show-stage-log.py" --env-file "$env_file" -- "${2:-}"
+fi
+
+if [[ ! -f "$env_file" ]]; then
+  echo "Missing $env_file." >&2
+  exit 1
+fi
+
+load_setting() {
+  local requested_key="$1"
+  local line key value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    if [[ "$key" == "$requested_key" ]]; then
+      printf '%s' "$value"
+      return
+    fi
+  done < "$env_file"
+}
+
+subscription_id="$(load_setting AZURE_SUBSCRIPTION_ID)"
+resource_group="$(load_setting AZURE_RESOURCE_GROUP)"
+name_prefix="$(load_setting NAME_PREFIX)"
+host_name="${name_prefix}-host"
+
+if [[ -z "$subscription_id" || -z "$resource_group" || -z "$name_prefix" ]]; then
+  echo "AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, and NAME_PREFIX are required in $env_file." >&2
+  exit 1
+fi
+
+az account set --subscription "$subscription_id"
+
+case "${1:-}" in
+  status)
+    az vm get-instance-view \
+      --resource-group "$resource_group" \
+      --name "$host_name" \
+      --query "{name:name,powerState:instanceView.statuses[?starts_with(code, 'PowerState/')].displayStatus | [0]}" \
+      --output table
+    ;;
+  stop)
+    az vm deallocate --resource-group "$resource_group" --name "$host_name" --output none
+    ;;
+  start)
+    az vm start --resource-group "$resource_group" --name "$host_name" --output none
+    ;;
+  retire-source)
+    nested_vm="${2:-}"
+    case "$nested_vm" in
+      JS-SQL-01|JS-UBUNTU-01) ;;
+      *)
+        echo "Usage: scripts/lab.sh retire-source <JS-SQL-01|JS-UBUNTU-01>" >&2
+        exit 1
+        ;;
+    esac
+    az vm run-command invoke \
+      --resource-group "$resource_group" \
+      --name "$host_name" \
+      --command-id RunPowerShellScript \
+      --scripts "\$vmName = '$nested_vm'; Stop-VM -Name \$vmName -Force -ErrorAction SilentlyContinue; Set-VM -Name \$vmName -AutomaticStartAction Nothing; \$retiredFile = 'C:\\ArcJumpstart\\RetiredVMs.txt'; if (-not ((Get-Content \$retiredFile -ErrorAction SilentlyContinue) -contains \$vmName)) { Add-Content -Path \$retiredFile -Value \$vmName }" \
+      --output none
+    ;;
+  delete-infra)
+    if [[ "${2:-}" != "$resource_group" ]]; then
+      echo "Confirm deletion by running: scripts/lab.sh delete-infra $resource_group" >&2
+      exit 1
+    fi
+    az group delete --name "$resource_group" --yes
+    ;;
+  *)
+    echo "Usage: scripts/lab.sh <status|stop|start|stage-log|retire-source|delete-infra>" >&2
+    exit 1
+    ;;
+esac

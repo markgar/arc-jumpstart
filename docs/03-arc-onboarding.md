@@ -92,6 +92,36 @@ credential or dedicated service principal unless the user explicitly approved
 retaining it for another bounded onboarding wave. Removing that onboarding
 identity does not disconnect machines that are already connected.
 
+### Agent-driven evidence and safe logs
+
+When an agent operates through the outer Hyper-V host, retain timestamped
+per-machine evidence under `C:\ArcJumpstart\Logs` using names such as:
+
+```text
+Arc-Onboard-JS-SQL-01-<UTC timestamp>.log
+Arc-Check-JS-SQL-01-<UTC timestamp>.log
+Arc-Connect-JS-SQL-01-<UTC timestamp>.log
+```
+
+Record observable results rather than credentials or generated commands:
+
+- Outer Managed Run Command name, start/end time, execution state and exit code,
+  when that transport is used.
+- Guest name, Connected Machine agent version and `himds` service state.
+- The `azcmagent check` summary and whether every required endpoint passed.
+- Final `azcmagent show` connection state and the matching Azure Arc machine
+  resource state.
+- Extension provisioning state after connection, when an extension is part of
+  the approved exercise.
+
+Do not place the service-principal secret, a generated authentication script,
+device code, access token or full `azcmagent connect` arguments in these logs.
+PowerShell transcript startup headers and remote-process arguments can contain
+sensitive values even when the command output appears harmless. Do not enable
+transcription around the connect command. When reporting progress, return only
+a bounded redacted tail and the structured state above; never publish a raw
+host transcript.
+
 See Microsoft's
 [service-principal onboarding guidance](https://learn.microsoft.com/azure/azure-arc/servers/onboard-service-principal)
 and [`azcmagent connect` reference](https://learn.microsoft.com/azure/azure-arc/servers/azcmagent-connect)

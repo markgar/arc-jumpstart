@@ -16,6 +16,18 @@ for that boundary and the standalone commands.
 
 ## Read stage logs
 
+For concise live progress while a stage is running:
+
+```bash
+./scripts/lab.sh stage-progress 40
+```
+
+This reads logs retained on the host and displays transcript path,
+`LastWriteUtc`, size and the last 60 filtered lines. It does not require Blob
+Storage and does not start, resume or replace the stage. A stale last-write time
+is a reason to inspect the actual Azure Run Command and the reported wait—not
+automatic permission to retry.
+
 Read the latest host transcript for a stage:
 
 ```bash

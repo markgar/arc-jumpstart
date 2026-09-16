@@ -127,9 +127,9 @@ class ViewerIntegrationTests(unittest.TestCase):
             "FAKE_CALLS": str(self.calls), "AZURE_CLIENT_SECRET": "fake-environment-secret",
         }
 
-    def run_viewer(self, stage="60"):
+    def run_viewer(self, stage="60", command="stage-log"):
         return subprocess.run(
-            ["bash", str(ROOT / "scripts/lab.sh"), "stage-log", stage],
+            ["bash", str(ROOT / "scripts/lab.sh"), command, stage],
             env=self.environment, capture_output=True, text=True, check=False,
         )
 
@@ -152,6 +152,8 @@ class ViewerIntegrationTests(unittest.TestCase):
         self.assertEqual(calls[1][:3], ["vm", "run-command", "invoke"])
         script = calls[1][calls[1].index("--scripts") + 1]
         self.assertIn("60-configure-sql-ag-*.log", script)
+        self.assertIn("Select-Object -Last 200", script)
+        self.assertIn("LastWriteUtc=", script)
         self.assertNotIn("-Tail", script)
         self.assertLess(script.rindex("Remove-TranscriptStartupHeader"), script.rindex("Select-Object -Last 200"))
         for secret in ("fake-host-password", "fake-dsrm-password", "fake-sql-password", "fake-sas-signature"):
@@ -173,6 +175,29 @@ class ViewerIntegrationTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("fake-host-password", result.stderr)
         self.assertEqual(self.calls.read_text(), before)
+
+    def test_progress_view_is_a_short_live_tail(self):
+        result = self.run_viewer("40", "stage-progress")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        script = calls[1][calls[1].index("--scripts") + 1]
+        self.assertIn("40-create-nested-vms-*.log", script)
+        self.assertIn("Select-Object -Last 60", script)
+        self.assertIn("HostLog=", script)
+        self.assertIn("SizeBytes=", script)
+
+    def test_every_stage_has_timestamped_progress_or_worker_logging(self):
+        direct = ("10-init-host.ps1", "20-host-network.ps1", "30-download-images.ps1",
+                  "40-create-nested-vms.ps1", "50-configure-domain.ps1",
+                  "60-configure-sql-ag.ps1")
+        for name in direct:
+            with self.subTest(name=name):
+                source = (ROOT / "artifacts" / "scripts" / name).read_text()
+                self.assertIn("[DateTime]::UtcNow.ToString('o')", source)
+                self.assertRegex(source, r"\[stage(?:10|20|30|40|50|60)\]")
+        sql = (ROOT / "artifacts" / "scripts" / "45-install-sql.ps1").read_text()
+        self.assertIn("function Write-StageLog", sql)
+        self.assertIn("remains $($worker.Job.State)", sql)
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required for the native transcript-filter test")
     def test_actual_remote_filter_suppresses_header_before_tail(self):

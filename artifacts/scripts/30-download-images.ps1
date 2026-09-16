@@ -22,6 +22,7 @@ New-Item -ItemType Directory -Path $logRoot, $imageRoot -Force | Out-Null
 Start-Transcript -Path (Join-Path $logRoot "30-download-images-$RunId.log") -Force
 
 try {
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage30] Preparing the image cache and AzCopy."
     $azCopy = Join-Path $root 'Tools\azcopy.exe'
     if (-not (Test-Path $azCopy)) {
         $toolsRoot = Split-Path $azCopy
@@ -42,7 +43,7 @@ try {
     foreach ($fileName in ($ImageFileNames -split ';' | Where-Object { $_ })) {
         $destination = Join-Path $imageRoot $fileName
         if (Test-Path $destination) {
-            Write-Host "Already present: $destination"
+            Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage30] Already present: $destination"
             continue
         }
 
@@ -51,7 +52,7 @@ try {
             $source = "${source}?$($ImageSourceSasToken.TrimStart('?'))"
         }
         $partialDestination = "$destination.partial"
-        Write-Host "Downloading $fileName"
+        Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage30] Downloading $fileName"
         Remove-Item $partialDestination -Force -ErrorAction SilentlyContinue
         & $azCopy copy $source $partialDestination --check-length=true --overwrite=true --log-level=INFO
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $partialDestination)) {
@@ -59,11 +60,13 @@ try {
             throw "AzCopy failed for $fileName with exit code $LASTEXITCODE."
         }
         Move-Item $partialDestination $destination -Force
+        Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage30] Completed $fileName ($((Get-Item $destination).Length) bytes)."
     }
 
     Get-ChildItem $imageRoot -Filter *.vhdx |
         Select-Object Name, Length, LastWriteTime |
         Format-Table -AutoSize
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage30] Required image cache is ready."
 }
 finally {
     Stop-Transcript

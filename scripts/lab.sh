@@ -4,12 +4,16 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 env_file="${ENV_FILE:-$repo_root/deploy.env}"
 
-if [[ "${1:-}" == stage-log ]]; then
+if [[ "${1:-}" == stage-log || "${1:-}" == stage-progress ]]; then
   if ! command -v python3 >/dev/null 2>&1; then
     echo "python3 is required for safe stage-log display." >&2
     exit 1
   fi
-  exec python3 "$repo_root/scripts/show-stage-log.py" --env-file "$env_file" -- "${2:-}"
+  viewer_args=(--env-file "$env_file")
+  if [[ "${1:-}" == stage-progress ]]; then
+    viewer_args+=(--progress)
+  fi
+  exec python3 "$repo_root/scripts/show-stage-log.py" "${viewer_args[@]}" -- "${2:-}"
 fi
 
 if [[ ! -f "$env_file" ]]; then
@@ -82,7 +86,7 @@ case "${1:-}" in
     az group delete --name "$resource_group" --yes
     ;;
   *)
-    echo "Usage: scripts/lab.sh <status|stop|start|stage-log|retire-source|delete-infra>" >&2
+    echo "Usage: scripts/lab.sh <status|stop|start|stage-progress|stage-log|retire-source|delete-infra>" >&2
     exit 1
     ;;
 esac

@@ -96,6 +96,7 @@ function Invoke-GuestWithRetry {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     do {
         try {
+            Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage60] Starting SQL cluster and availability-group configuration."
             return Invoke-Command `
                 -VMName $VMName `
                 -Credential $Credential `
@@ -672,6 +673,7 @@ try {
     }
     $sqlServerModule = Get-SqlServerModulePackage
 
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage60] Preparing standalone migration database and SQL cluster nodes."
     Invoke-GuestWithRetry `
         -VMName $standaloneName `
         -Credential $domainCredential `
@@ -771,6 +773,7 @@ EXEC (N'USE [$DatabaseName];
             }
         }
 
+        Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage60] Running installed-update inventory and native cluster validation."
         Import-Module FailoverClusters
         $cluster = Get-Cluster -ErrorAction Stop
         [pscustomobject]@{
@@ -836,6 +839,7 @@ if (-not `$env:ARCJUMPSTART_OPERATION_ATTEMPT_ID) { throw 'Validation operation 
         }
 
     if (-not $clusterState.Exists) {
+        Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage60] Native validation passed; creating cluster $ClusterName."
         $clusterScript = @"
 Import-Module FailoverClusters
 New-Cluster -Name '$($ClusterName.Replace("'", "''"))' -Node '$($primaryName.Replace("'", "''"))', '$($secondaryName.Replace("'", "''"))' -StaticAddress '$($ClusterIp.Replace("'", "''"))' -NoStorage -Force -ErrorAction Stop | Out-Null
@@ -848,6 +852,7 @@ New-Cluster -Name '$($ClusterName.Replace("'", "''"))' -Node '$($primaryName.Rep
             -ScriptText $clusterScript
     }
     elseif ($secondaryName -notin @($clusterState.Nodes)) {
+        Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage60] Adding the missing secondary node to cluster $ClusterName."
         $addNodeScript = @"
 Import-Module FailoverClusters
 Add-ClusterNode -Cluster '$($ClusterName.Replace("'", "''"))' -Name '$($secondaryName.Replace("'", "''"))' -NoStorage -ErrorAction Stop | Out-Null
@@ -921,6 +926,7 @@ if (`$cluster.Name -ine '$($ClusterName.Replace("'", "''"))' -or `$nodes.Count -
                 Grant-SmbShareAccess -Name ClusterWitness -AccountName $domainAdmins -AccessRight Full -Force | Out-Null
             }
 
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage60] Cluster identity verified; configuring witness, quorum, SQL HADR, and endpoints."
             if (-not (Get-ADComputer -Filter "Name -eq '$TargetListenerName'")) {
                 New-ADComputer -Name $TargetListenerName -Enabled $false
             }
@@ -1099,6 +1105,7 @@ BACKUP LOG [$DatabaseName] TO DISK = @logBackup WITH INIT, CHECKSUM;
         }
 
     if (-not $agExists) {
+        Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage60] Creating availability group $AvailabilityGroupName."
         Invoke-GuestWithRetry `
             -VMName $currentPrimaryName `
             -Credential $domainCredential `
@@ -1202,6 +1209,7 @@ WHERE is_local = 1
                     throw "Conflicting secondary database $DatabaseName is not a replica in $AgName. Investigate/back up its data; automatic DROP DATABASE or replacement is forbidden."
                 }
 
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage60] Availability group exists; joining database and waiting for automatic seeding."
                 & $sqlcmd -S localhost -E -b -C -Q "ALTER AVAILABILITY GROUP [$AgName] JOIN;"
                 if ($LASTEXITCODE -ne 0) {
                     throw "Failed to join the secondary to $AgName."
@@ -1305,6 +1313,7 @@ WHERE drs.is_local = 1
         -Credential $domainCredential `
         -Query "SET NOCOUNT ON; SELECT COUNT(*) FROM sys.availability_group_listeners l JOIN sys.availability_groups ag ON ag.group_id = l.group_id WHERE l.dns_name = N'$ListenerName' AND ag.name = N'$AvailabilityGroupName';")
     if ($listenerCount -eq 0) {
+        Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage60] Creating listener $ListenerName at $ListenerIp."
         Invoke-GuestWithRetry `
             -VMName $currentPrimaryName `
             -Credential $domainCredential `
@@ -1362,6 +1371,7 @@ Test-LabAgListener -Fqdn '$("$ListenerName.$DomainName".Replace("'", "''"))' -Ex
 "@
         Invoke-GuestLocalProcess -VMName $standaloneName -ConnectionCredential $domainCredential `
             -ProcessCredential $domainCredential -OperationName 'ArcJumpstart-VerifyListener' -ScriptText $listenerScript -TimeoutSeconds 420
+        Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage60] Cluster, availability group, synchronized database, and listener verification completed."
 }
 finally {
     Stop-Transcript

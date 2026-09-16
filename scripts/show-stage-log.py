@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Display redacted stage logs. Stored host transcripts remain sensitive and unchanged."""
+"""Display redacted stage logs or a short live progress view from the host."""
 
 import argparse
 import html
@@ -124,16 +124,18 @@ class Redactor:
         return self.pattern.sub("[REDACTED]", text) if self.pattern else text
 
 
-def stage_script(stage):
+def stage_script(stage, line_count=200):
     prefix = STAGES[stage]
     return TRANSCRIPT_FILTER + rf"""
 $ErrorActionPreference = 'Stop'
 $log = Get-ChildItem 'C:\ArcJumpstart\Logs\{prefix}-*.log' -ErrorAction Stop |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $log) {{ throw 'No matching stage transcript was found.' }}
-Write-Host $log.FullName
+Write-Host ('HostLog={0}' -f $log.FullName)
+Write-Host ('LastWriteUtc={0:o}' -f $log.LastWriteTimeUtc)
+Write-Host ('SizeBytes={0}' -f $log.Length)
 Get-Content -LiteralPath $log.FullName -ErrorAction Stop |
-    Remove-TranscriptStartupHeader | Select-Object -Last 200
+    Remove-TranscriptStartupHeader | Select-Object -Last {line_count}
 """
 
 
@@ -155,6 +157,8 @@ def run_az(arguments, redactor):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", required=True)
+    parser.add_argument("--progress", action="store_true",
+                        help="Show a concise live tail rather than the longer diagnostic view.")
     parser.add_argument("stage")
     args = parser.parse_args(argv)
     try:
@@ -165,7 +169,8 @@ def main(argv=None):
         return 1
     redactor = Redactor([*entries, *os.environ.items()])
     if args.stage not in STAGES:
-        print("Usage: scripts/lab.sh stage-log <10|20|30|40|45|50|60>", file=sys.stderr)
+        print("Usage: scripts/lab.sh <stage-progress|stage-log> <10|20|30|40|45|50|60>",
+              file=sys.stderr)
         return 1
     required = ("AZURE_SUBSCRIPTION_ID", "AZURE_RESOURCE_GROUP", "NAME_PREFIX")
     if any(not settings.get(key) for key in required):
@@ -179,7 +184,8 @@ def main(argv=None):
         "vm", "run-command", "invoke",
         "--resource-group", settings["AZURE_RESOURCE_GROUP"],
         "--name", settings["NAME_PREFIX"] + "-host",
-        "--command-id", "RunPowerShellScript", "--scripts", stage_script(args.stage),
+        "--command-id", "RunPowerShellScript",
+        "--scripts", stage_script(args.stage, 60 if args.progress else 200),
         "--query", "value[0].message", "--output", "tsv",
     ], redactor)
 

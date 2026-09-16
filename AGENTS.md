@@ -46,6 +46,10 @@ the next build.
    Prefer saved parallel paths: `all` overlaps `20`/`30`; `deploy.sh 20-30`
    provides the same overlap during recovery. Do not serialize independent
    work, but do not remove the readiness joins before dependent stages.
+   During a long stage, use `lab.sh stage-progress <stage>` for its timestamped
+   host-side phase messages. Use `stage-log` for a longer failure tail. Do not
+   treat silence as failure, poll tightly, or launch another deployment merely
+   to obtain status.
 5. On failure, inspect the first failing gate and use the documented recovery
    boundary. Save necessary fixes in the relevant Bicep/PowerShell source and
    regression tests before retrying the affected stage.

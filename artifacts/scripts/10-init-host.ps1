@@ -16,6 +16,7 @@ New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
 Start-Transcript -Path (Join-Path $logRoot "10-init-host-$RunId.log") -Force
 
 try {
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage10] Locating and preparing the persistent host data disk."
     $expectedSize = $DataDiskSizeGB * 1GB
     $candidateDisks = @(
         Get-Disk | Where-Object {
@@ -66,6 +67,7 @@ try {
     elseif ($volume.FileSystem -ne 'NTFS') {
         throw "Drive F uses $($volume.FileSystem); this lab requires NTFS."
     }
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage10] Persistent NTFS data volume F: is ready."
 
     foreach ($path in @(
         $root,
@@ -78,6 +80,7 @@ try {
     }
 
     $features = @('Hyper-V', 'DHCP', 'RSAT-DHCP')
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage10] Installing Hyper-V, DHCP, and DHCP management features."
     $result = Install-WindowsFeature -Name $features -IncludeManagementTools
     if (-not $result.Success) {
         throw "Windows feature installation failed: $($result.ExitCode)"
@@ -86,6 +89,7 @@ try {
     if ($result.RestartNeeded -eq 'Yes') {
         Write-Host 'A restart is required. The deployment wrapper will restart the host after this run command completes.'
     }
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage10] Host initialization script completed; wrapper restart/readiness gate is next."
 }
 finally {
     Stop-Transcript

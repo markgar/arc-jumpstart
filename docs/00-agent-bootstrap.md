@@ -96,6 +96,13 @@ between stages. Stage `30` downloads approximately 38 GiB of images; stage `45`
 downloads SQL media once and installs on three guests in parallel. A quiet
 terminal is not proof of a hang, and a running VM is not proof that SQL is ready.
 
+Use `./scripts/lab.sh stage-progress <stage>` during long operations. It safely
+returns the latest host transcript metadata and a short timestamped tail through
+the Azure management channel; no storage account is required. Report the last
+observable step and wait reason rather than only saying that a script is
+running. Use the longer `stage-log` view for failure diagnosis. Do not tight-poll
+or confuse repeated wait messages with proof of forward progress.
+
 For a stopped build whose host is ready but `20`/`30` have not been submitted,
 use `./scripts/deploy.sh 20-30` to retain their overlap rather than running two
 serial commands. If either operation is already active, inspect it and use the

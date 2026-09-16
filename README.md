@@ -86,6 +86,11 @@ three guests in parallel. Stage `40` still requires both networking and images
 to succeed, and domain/cluster readiness gates remain mandatory.
 Use `./scripts/lab.sh status`, `stop`, and `start` for lifecycle operations; it reads only the non-secret Azure identifiers it needs from `deploy.env`.
 
+During a long-running stage, `./scripts/lab.sh stage-progress <stage>` safely
+reads the latest timestamped host transcript tail through Azure Run Command.
+Logs remain on the workshop host; no storage account or public log endpoint is
+created. Use `stage-log` for a longer diagnostic tail.
+
 The development lab and a separate fresh Windows-template proof succeeded.
 A clean replay of the complete updated pipeline, including parallel SQL
 installation, remains the repeatability acceptance gate; see the

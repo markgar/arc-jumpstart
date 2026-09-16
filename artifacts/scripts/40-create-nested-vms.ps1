@@ -83,6 +83,7 @@ function Invoke-WindowsGuest {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     do {
         try {
+            Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage40] Preparing or reusing the generalized Windows parent."
             return Invoke-Command -VMName $VMName -Credential $credential -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -ErrorAction Stop
         }
         catch {
@@ -695,6 +696,7 @@ try {
         }
     )
 
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage40] Creating and starting all nested guests before per-guest readiness checks."
     foreach ($definition in $definitions) {
         New-NestedVM `
             -Name $definition.Name `
@@ -705,6 +707,7 @@ try {
 
     foreach ($definition in $definitions) {
         if (-not $definition.Linux) {
+            Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage40] Verifying heartbeat, OOBE, activation, and final name on $($definition.Name)."
             Wait-VMHeartbeat -VMName $definition.Name
             Wait-WindowsGuestOobe -VMName $definition.Name
             Invoke-WindowsGuest -VMName $definition.Name -ArgumentList (Get-WindowsProvisioningHelperScript) -ScriptBlock {
@@ -756,6 +759,7 @@ try {
             New-NetIPAddress -InterfaceIndex $adapter.ifIndex -IPAddress $Address -PrefixLength 24 -DefaultGateway $Gateway | Out-Null
             Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses '1.1.1.1'
         }
+        Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage40] Nested guests passed setup, activation, identity, and DC network preparation gates."
     }
 
     Get-VM | Where-Object Name -like 'JS-*' |

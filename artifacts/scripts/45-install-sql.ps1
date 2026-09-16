@@ -632,6 +632,7 @@ function Invoke-ParallelSqlGuests {
         if ((Get-VM -Name $name -ErrorAction Stop).State -ne 'Running') { throw "$name must be running after stage 40." }
     }
     $script:phaseDeadlineUtc = [DateTime]::UtcNow.AddMinutes(25)
+    Write-StageLog 'Preparing and verifying the shared SQL media cache before launching guest workers.'
     try { $payload = @(Get-SqlPayload) }
     finally { $script:phaseDeadlineUtc = $null }
     # Ship the existing function definitions, not a second hand-maintained
@@ -645,6 +646,7 @@ function Invoke-ParallelSqlGuests {
     $workers = [Collections.Generic.List[object]]::new()
     $failures = [Collections.Generic.List[string]]::new()
     try {
+        Write-StageLog "Launching $($Names.Count) independent SQL guest workers."
         foreach ($name in $Names) {
             try {
                 $context = [pscustomobject]@{
@@ -664,6 +666,7 @@ function Invoke-ParallelSqlGuests {
         # probes/copies. Never close a sibling's held installer session on failure.
         foreach ($worker in $workers) {
             while ($worker.Job.State -notin @('Completed', 'Failed', 'Stopped')) {
+                Write-StageLog "$($worker.VMName) worker remains $($worker.Job.State); waiting without terminating its installer."
                 try { Wait-Job -Job $worker.Job -Timeout 30 -Force -ErrorAction Stop | Out-Null }
                 catch {
                     $failures.Add("$($worker.VMName) worker wait failed: $($_.Exception.Message)")

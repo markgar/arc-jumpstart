@@ -26,6 +26,7 @@ New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
 Start-Transcript -Path (Join-Path $logRoot "20-host-network-$RunId.log") -Force
 
 try {
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage20] Configuring Hyper-V services, internal switch, NAT, and DHCP."
     if ($NestedNetworkPrefix -notmatch '^[0-9]+\.[0-9]+\.[0-9]+\.0/24$') {
         throw 'This lab currently supports only a /24 nested network prefix.'
     }
@@ -72,6 +73,7 @@ try {
     if (-not $nat) {
         New-NetNat -Name 'ArcJumpstartNat' -InternalIPInterfaceAddressPrefix $NestedNetworkPrefix | Out-Null
     }
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage20] Internal switch and NAT are ready; configuring DHCP scope and options."
 
     $scopeId = ($NestedNetworkPrefix -split '/')[0]
     $scope = Get-DhcpServerv4Scope -ScopeId $scopeId -ErrorAction SilentlyContinue
@@ -102,7 +104,7 @@ try {
         -Force
 
     Restart-Service DHCPServer
-    Write-Host "Nested network $NestedNetworkPrefix is ready behind gateway $NestedGatewayIp."
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage20] Nested network $NestedNetworkPrefix is ready behind gateway $NestedGatewayIp."
 }
 finally {
     Stop-Transcript

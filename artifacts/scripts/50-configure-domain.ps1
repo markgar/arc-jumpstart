@@ -95,6 +95,7 @@ function Resolve-LabDcCredential {
     )
     foreach ($candidate in @($DomainCredential, $LocalCredential)) {
         try {
+            Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage50] Starting domain, DNS, member join, and SQL access configuration."
             $system = Invoke-Command -VMName $VMName -Credential $candidate -ErrorAction Stop -ScriptBlock {
                 Get-CimInstance Win32_ComputerSystem | Select-Object Domain, DomainRole
             }
@@ -339,7 +340,7 @@ try {
     }
 
     foreach ($memberName in $memberNames) {
-        Write-Host "Configuring domain membership and SQL access on $memberName."
+        Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage50] Configuring domain membership and SQL access on $memberName."
         $memberCredential = New-PlainTextCredential -Username "$memberName\Administrator" -Password $NestedWindowsPassword
         Wait-VMHeartbeat -VMName $memberName
         $joinRequired = Invoke-GuestWithRetry `
@@ -471,6 +472,7 @@ IF IS_SRVROLEMEMBER(N'sysadmin', N'$domainAdmins') <> 1
             Select-Object Name, DNSHostName, Enabled |
             Format-Table -AutoSize
     }
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage50] Domain, DNS, member trust, and domain-admin SQL access checks completed."
 }
 finally {
     Stop-Transcript

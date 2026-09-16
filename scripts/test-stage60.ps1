@@ -556,9 +556,23 @@ $validationAssignment = $ast.Find({
         $script:clusterActionCalls++
         if ($script:clusterActionFails) { throw 'cluster cmdlet failed' }
     }
+    function Wait-LabClusterReady {
+        [CmdletBinding()]
+        param(
+            [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$ClusterName,
+            [Parameter(Mandatory)][ValidateCount(2, 2)][string[]]$ExpectedNodes
+        )
+        if ($ClusterName -cne $script:expectedClusterName -or
+            ($ExpectedNodes -join ',') -cne "$primaryName,$secondaryName") {
+            throw 'Generated Wait-LabClusterReady lost its intended cluster or nodes.'
+        }
+        $script:clusterActionCalls++
+        if ($script:clusterActionFails) { throw 'cluster cmdlet failed' }
+    }
     $contracts = @(
         @{ Script = 'clusterScript'; Command = 'New-Cluster'; Parameters = @('Name', 'Node', 'StaticAddress', 'NoStorage', 'Force', 'ErrorAction') },
         @{ Script = 'addNodeScript'; Command = 'Add-ClusterNode'; Parameters = @('Cluster', 'Name', 'NoStorage', 'ErrorAction') },
+        @{ Script = 'verifyClusterScript'; Command = 'Wait-LabClusterReady'; Parameters = @('ClusterName', 'ExpectedNodes') },
         @{ Script = 'quorumScript'; Command = 'Set-ClusterQuorum'; Parameters = @('Cluster', 'FileShareWitness', 'ErrorAction') }
     )
     foreach ($customNames in @($false, $true)) {
@@ -567,6 +581,7 @@ $validationAssignment = $ast.Find({
         $primaryName = if ($customNames) { 'OTHER-AG-01' } else { 'JS-SQL-AG-01' }
         $secondaryName = if ($customNames) { 'OTHER-AG-02' } else { 'JS-SQL-AG-02' }
         $dcName = if ($customNames) { 'OTHER-DC' } else { 'JS-DC-01' }
+        $script:expectedClusterName = $ClusterName
         foreach ($contract in $contracts) {
             $assignment = $ast.Find({
                 param($n)
@@ -585,10 +600,11 @@ $validationAssignment = $ast.Find({
                 throw "Generated $($contract.Command) is missing bound command parameters."
             }
             $script:clusterActionCalls = 0; $script:clusterActionFails = $false
-            & ([scriptblock]::Create($generated))
+            $generatedCommand = $commands[0].Extent.Text
+            & ([scriptblock]::Create($generatedCommand))
             if ($script:clusterActionCalls -ne 1) { throw 'Each generated action must execute exactly one cluster cmdlet.' }
             $script:clusterActionFails = $true
-            Assert-Throws { & ([scriptblock]::Create($generated)) } 'cluster cmdlet failed'
+            Assert-Throws { & ([scriptblock]::Create($generatedCommand)) } 'cluster cmdlet failed'
         }
     }
 }

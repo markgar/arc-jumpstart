@@ -923,8 +923,7 @@ function Wait-LabClusterReady {
 ${function:Wait-LabClusterReady}
 }
 Import-Module FailoverClusters
-Wait-LabClusterReady -ClusterName '$($ClusterName.Replace("'", "''"))' `
-    -ExpectedNodes @('$($primaryName.Replace("'", "''"))', '$($secondaryName.Replace("'", "''"))') | Out-Null
+Wait-LabClusterReady -ClusterName '$($ClusterName.Replace("'", "''"))' -ExpectedNodes @('$($primaryName.Replace("'", "''"))', '$($secondaryName.Replace("'", "''"))') | Out-Null
 "@
     Invoke-GuestLocalProcess -VMName $primaryName -ConnectionCredential $domainCredential `
         -ProcessCredential $domainCredential -OperationName 'ArcJumpstart-VerifyCluster' -ScriptText $verifyClusterScript

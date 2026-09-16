@@ -83,6 +83,16 @@ the next build.
   download proves only general HTTPS access, not Arc service connectivity.
   Never start a competing check while a connect operation is active; wait for
   the first operation to become terminal, then check before any retry.
+- Choose authentication for the actual operator model. A learner signed in at
+  the guest console may complete the generated device-code flow. An agent
+  operating through PowerShell Direct, Run Command or another noninteractive
+  channel must never launch a device-code connection and wait for a person who
+  cannot see or answer it. With explicit user approval, use a dedicated
+  short-lived service principal scoped to the Arc resource group with only the
+  `Azure Connected Machine Onboarding` role. Keep its secret in approved
+  owner-only storage outside the worktree, pass it only at execution time, and
+  remove the credential or dedicated principal after onboarding. Do not print
+  the secret, generated connect command or raw process arguments.
 - Never print or commit `deploy.env`, passwords, SAS tokens or registration keys.
   Use `lab.sh stage-log`; raw Windows transcripts can contain credentials.
 - Never bypass OOBE, licensing, SQL readiness, cluster validation or operation

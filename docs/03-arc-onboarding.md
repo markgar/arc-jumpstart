@@ -36,6 +36,67 @@ In the Azure portal:
 
 Use the portal-generated script rather than a script committed to this repository. It contains your selected tenant, subscription, resource group, region, and a short-lived authentication flow.
 
+## Choose the authentication workflow
+
+Arc connection authentication must match how the guest is being operated.
+These are two separate workflows; do not start one and silently fall back to
+the other.
+
+### Learner at the guest console: device code
+
+Use the portal-generated device-code flow when a learner is signed in to the
+guest and can immediately read the code, open the Microsoft sign-in page in a
+browser, and complete authentication. This is the preferred workshop path
+because the learner experiences the normal single-server onboarding flow.
+
+Do not use this path for an agent operating through PowerShell Direct, Azure VM
+Run Command, or another noninteractive channel. A device-code command can wait
+indefinitely when nobody can see and answer its prompt. If one was launched
+accidentally, terminate only that waiting `azcmagent connect` process, preserve
+its non-secret result, confirm whether an Arc machine resource was created, and
+run the required network check before choosing a supported retry.
+
+### Agent-driven onboarding: service principal
+
+For explicitly requested unattended onboarding, create or reuse a dedicated,
+short-lived service principal with the built-in
+`Azure Connected Machine Onboarding` role scoped only to the dedicated Arc
+resource group. Do not grant subscription-wide Contributor merely to simplify
+the exercise. The user must approve creating or using this identity.
+
+Store its tenant ID, application/client ID, and secret in approved owner-only
+storage outside the repository and disposable worktree. Do not add them to
+`deploy.env`, paste them into chat, print them, or retain a generated connection
+command in a transcript. After the agent is installed and the pre-connect
+network check passes, the noninteractive connection has this shape:
+
+```text
+azcmagent connect
+  --subscription-id <subscription-id>
+  --resource-group <arc-resource-group>
+  --location <arc-region>
+  --tenant-id <tenant-id>
+  --service-principal-id <application-id>
+  --service-principal-secret <secret supplied only at execution time>
+```
+
+The actual invocation must remain a single command, with the secret supplied
+from protected runtime state rather than copied into repository content or
+displayed output. Avoid PowerShell transcription around this command and
+redact command arguments from any agent-visible diagnostic output.
+
+Use one SQL guest as the pilot. Require `azcmagent show` to report `Connected`
+and confirm the expected Azure Arc machine resource before onboarding the
+remaining guests. When onboarding is complete, remove the short-lived
+credential or dedicated service principal unless the user explicitly approved
+retaining it for another bounded onboarding wave. Removing that onboarding
+identity does not disconnect machines that are already connected.
+
+See Microsoft's
+[service-principal onboarding guidance](https://learn.microsoft.com/azure/azure-arc/servers/onboard-service-principal)
+and [`azcmagent connect` reference](https://learn.microsoft.com/azure/azure-arc/servers/azcmagent-connect)
+before execution because authentication and agent requirements can change.
+
 ## Required pre-connect network check
 
 Do not run an entire generated onboarding script without pausing at the

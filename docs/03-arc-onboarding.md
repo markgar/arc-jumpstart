@@ -220,6 +220,28 @@ $domainPassword = Read-Host 'JUMPSTART\Administrator password' -AsSecureString
     -DomainAdministratorPassword $domainPassword
 ```
 
+For an agent-managed lab, the supported workstation entry point performs the
+same staging through a protected Managed Run Command, without requiring
+clipboard or keyboard input in the Hyper-V console:
+
+```bash
+ENV_FILE=/absolute/private/path/lab.env ./scripts/deploy.sh arc-launchers
+```
+
+Set `ARC_RESOURCE_GROUP` and `ARC_LOCATION` in the private environment file
+to override the defaults. When omitted, they derive as
+`<AZURE_RESOURCE_GROUP>-arc` and `AZURE_LOCATION`. The command creates or
+retains that dedicated resource group, applies
+`ArcSQLServerExtensionDeployment=LicenseOnly`, and stages the launchers. It
+does not connect any guest or begin device-code authentication.
+
+`deploy.sh all` runs this staging step by default after stage `60`, so a fresh
+lab should already show **Connect to Azure Arc.cmd** on each Windows guest's
+public desktop. Set `PREPARE_ARC_LAUNCHERS=false` before deployment to omit it.
+Only the clickable `.cmd` file is placed on the desktop; its PowerShell payload
+is retained under `C:\ProgramData\ArcJumpstart`. The launcher is intentionally
+safe to ignore until the learner is ready.
+
 The script defaults to all four Windows guests. Use `-VMNames` for an approved
 first wave such as `JS-SQL-01`. It stages only the launcher and non-secret Azure
 target identifiers; it does not run `azcmagent connect`. On the guest, the

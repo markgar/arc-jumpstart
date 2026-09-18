@@ -33,9 +33,10 @@ foreach ($vmName in $VMNames) {
         $programRoot = 'C:\ProgramData\ArcJumpstart'
         $logRoot = Join-Path $programRoot 'Logs'
         $publicDesktop = Join-Path $env:PUBLIC 'Desktop'
-        $launcherPath = Join-Path $publicDesktop 'Connect to Azure Arc.ps1'
+        $launcherPath = Join-Path $programRoot 'Connect to Azure Arc.ps1'
         $desktopPath = Join-Path $publicDesktop 'Connect to Azure Arc.cmd'
         New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
+        Remove-Item -LiteralPath (Join-Path $publicDesktop 'Connect to Azure Arc.ps1') -Force -ErrorAction SilentlyContinue
 
         $launcher = @'
 $ErrorActionPreference = 'Stop'

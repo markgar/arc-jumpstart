@@ -92,6 +92,12 @@ class BastionWrapperTests(unittest.TestCase):
             "AZURE_RESOURCE_GROUP": "mock-rg",
             "AZURE_LOCATION": "eastus2",
             "NAME_PREFIX": "mock",
+            "AUTO_SHUTDOWN_ENABLED": "false",
+            "AUTO_SHUTDOWN_TIME": "2200",
+            "AUTO_SHUTDOWN_TIME_ZONE": "Central Standard Time",
+            "PREPARE_ARC_LAUNCHERS": "true",
+            "ARC_RESOURCE_GROUP": "mock-arc-rg",
+            "ARC_LOCATION": "westus2",
         }
         if credentials:
             values.update({
@@ -122,14 +128,46 @@ class BastionWrapperTests(unittest.TestCase):
     def test_default_build_submits_bastion_independently_and_reaches_stage60(self):
         result = self.run_script("deploy.sh", "all")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(len(self.deployments()), 9)
+        self.assertEqual(len(self.deployments()), 11)
         self.assertIn("arc-jumpstart-bastion", self.deployments()[1])
         self.assertIn("--no-wait", self.deployments()[1])
-        self.assertIn("arc-jumpstart-60-sql-ag", self.deployments()[-1])
+        self.assertIn("arc-jumpstart-auto-shutdown", self.deployments()[3])
+        self.assertIn("arc-jumpstart-60-sql-ag", self.deployments()[-2])
+        self.assertIn("arc-jumpstart-arc-launchers", self.deployments()[-1])
         self.assertEqual([call for call in self.calls() if "arc-jumpstart-bastion" in call],
                          [self.deployments()[1]])
         self.assertFalse(any(arg.startswith("deployBastion=") for call in self.calls() for arg in call))
         self.assertIn("DEPLOY_BASTION=true", (ROOT / "deploy.env.example").read_text())
+
+    def test_auto_shutdown_requires_explicit_setup_decision(self):
+        self.write_config()
+        text = self.config.read_text().replace("AUTO_SHUTDOWN_ENABLED=false\n", "")
+        self.config.write_text(text)
+        result = self.run_script("deploy.sh", "all")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("AUTO_SHUTDOWN_ENABLED must be explicitly set", result.stderr)
+
+    def test_auto_shutdown_can_be_updated_without_replaying_host_stage(self):
+        self.write_config()
+        result = self.run_script("deploy.sh", "auto-shutdown")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.deployments()), 1)
+        call = self.deployments()[0]
+        self.assertIn("arc-jumpstart-auto-shutdown", call)
+        self.assertIn("enabled=false", call)
+        self.assertIn("shutdownTime=2200", call)
+        self.assertIn("timeZoneId=Central Standard Time", call)
+
+    def test_arc_launchers_can_be_omitted_from_full_build(self):
+        self.write_config()
+        text = self.config.read_text().replace(
+            "PREPARE_ARC_LAUNCHERS=true\n",
+            "PREPARE_ARC_LAUNCHERS=false\n",
+        )
+        self.config.write_text(text)
+        result = self.run_script("deploy.sh", "all")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any("arc-jumpstart-arc-launchers" in call for call in self.deployments()))
 
     def test_explicit_false_omits_bastion(self):
         self.write_config(bastion="false")
@@ -146,12 +184,13 @@ class BastionWrapperTests(unittest.TestCase):
                 result = self.run_script("deploy.sh", "all")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 deployments = self.deployments()
-                self.assertEqual(len(deployments), 9)
+                self.assertEqual(len(deployments), 11)
                 self.assertIn("arc-jumpstart-00-foundation", deployments[0])
                 self.assertIn("arc-jumpstart-bastion", deployments[1])
                 self.assertIn("--no-wait", deployments[1])
                 self.assertIn("arc-jumpstart-10-hyperv-host", deployments[2])
-                self.assertIn("arc-jumpstart-60-sql-ag", deployments[-1])
+                self.assertIn("arc-jumpstart-60-sql-ag", deployments[-2])
+                self.assertIn("arc-jumpstart-arc-launchers", deployments[-1])
                 bastion_calls = [call for call in self.calls() if "arc-jumpstart-bastion" in call]
                 self.assertEqual(bastion_calls, [deployments[1]])
                 self.assertIn("does not monitor or wait", result.stdout)
@@ -161,7 +200,8 @@ class BastionWrapperTests(unittest.TestCase):
         self.environment["FAKE_BASTION_SUBMIT_FAIL"] = "true"
         result = self.run_script("deploy.sh", "all")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("arc-jumpstart-60-sql-ag", self.deployments()[-1])
+        self.assertTrue(any("arc-jumpstart-60-sql-ag" in call for call in self.deployments()))
+        self.assertIn("arc-jumpstart-arc-launchers", self.deployments()[-1])
         self.assertIn("Mock Bastion request rejected.", result.stderr)
         self.assertIn("WARNING: Optional Bastion submission failed", result.stderr)
         self.assertIn("retry separately", result.stdout)

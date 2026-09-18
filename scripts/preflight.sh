@@ -14,7 +14,7 @@ case "$profile" in
 esac
 
 if [[ ! -f "$env_file" ]]; then
-  echo "Missing $env_file. Copy deploy.env.example to deploy.env first." >&2
+  echo "Missing $env_file. Copy deploy.env.example to an owner-only file and set ENV_FILE to its absolute path." >&2
   exit 1
 fi
 
@@ -40,12 +40,25 @@ load_env_file() {
 
 load_env_file
 
-for variable_name in AZURE_SUBSCRIPTION_ID AZURE_LOCATION HOST_VM_SIZE IMAGE_SOURCE_URL SQL_DOWNLOAD_URL; do
+for variable_name in AZURE_SUBSCRIPTION_ID AZURE_LOCATION HOST_VM_SIZE IMAGE_SOURCE_URL SQL_DOWNLOAD_URL \
+  AUTO_SHUTDOWN_ENABLED AUTO_SHUTDOWN_TIME AUTO_SHUTDOWN_TIME_ZONE; do
   if [[ -z "${!variable_name:-}" || "${!variable_name}" == "CHANGEME" ]]; then
     echo "$variable_name must be set in $env_file." >&2
     exit 1
   fi
 done
+
+case "$AUTO_SHUTDOWN_ENABLED" in
+  true|false) ;;
+  *)
+    echo "AUTO_SHUTDOWN_ENABLED must be explicitly set to true or false." >&2
+    exit 1
+    ;;
+esac
+if [[ ! "$AUTO_SHUTDOWN_TIME" =~ ^([01][0-9]|2[0-3])[0-5][0-9]$ ]]; then
+  echo "AUTO_SHUTDOWN_TIME must use 24-hour HHmm format." >&2
+  exit 1
+fi
 
 az account set --subscription "$AZURE_SUBSCRIPTION_ID"
 if [[ "$(az account show --query user.type --output tsv)" != "user" ]]; then
@@ -59,6 +72,7 @@ required_providers=(
   Microsoft.Storage
   Microsoft.Authorization
   Microsoft.ManagedIdentity
+  Microsoft.DevTestLab
 )
 
 if [[ "$profile" == "full" ]]; then

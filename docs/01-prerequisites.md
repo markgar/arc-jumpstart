@@ -43,7 +43,12 @@ done
 
 ## Capacity and quota
 
-The default host is Windows Server 2022 on `Standard_E16s_v5` with 16 vCPUs and 128 GiB RAM. Windows Server 2022 is used because it is currently listed in the Azure Migrate Hyper-V replication support matrix. Confirm that:
+The suggested host is Windows Server 2022 on `Standard_E16s_v7` with 16 vCPUs
+and 128 GiB RAM in `westus2`. These are overridable starting points that avoid
+known subscription restrictions encountered with the earlier East US 2 /
+E16s_v5 combination; availability, quota, capacity, and pricing still vary by
+subscription and time. Windows Server 2022 is used because it is currently
+listed in the Azure Migrate Hyper-V replication support matrix. Confirm that:
 
 1. The size is available in your chosen region.
 2. Your regional vCPU quota can accommodate it.
@@ -51,9 +56,17 @@ The default host is Windows Server 2022 on `Standard_E16s_v5` with 16 vCPUs and 
 
 The lab also creates a 1 TiB Premium SSD, optional Azure Bastion, a public IP for Bastion, and normal networking resources. Stop or deallocate the host when not in use. Deallocation stops compute billing but not disk, Bastion, or public IP charges.
 
+The lab supports an optional daily Azure auto-shutdown schedule for the outer
+host. Always ask the operator whether to enable it and for the intended local
+time and time zone. Do not enable it silently: shutdown can interrupt active
+assessment, replication, test migration or cutover work.
+
 ## Credentials
 
-Copy `deploy.env.example` to the ignored `deploy.env` file. Use unique passwords for:
+Copy `deploy.env.example` to an owner-only file outside the repository and set
+`ENV_FILE` to its absolute path. On macOS,
+`$HOME/.config/arc-jumpstart/lab.env` is a convenient example, not a required
+destination. Use unique passwords for:
 
 - The outer Hyper-V host.
 - Directory Services Restore Mode.
@@ -61,7 +74,9 @@ Copy `deploy.env.example` to the ignored `deploy.env` file. Use unique passwords
 
 The Microsoft Jumpstart VHDX images currently use `Administrator` / `JS123!!` for Windows and `jumpstart` / `JS123!!` for Ubuntu. Put the Windows password in `NESTED_WINDOWS_PASSWORD`. These are lab credentials in externally maintained images; do not expose this environment to untrusted networks or reuse the passwords elsewhere.
 
-`deploy.env` is parsed as data rather than executed as a shell script. Enter literal `KEY=value` lines without `export` or surrounding quotes; characters such as `$`, backticks, spaces, and `!` remain part of the value.
+The environment file is parsed as data rather than executed as a shell script.
+Enter literal `KEY=value` lines without `export` or surrounding quotes;
+characters such as `$`, backticks, spaces, and `!` remain part of the value.
 
 The deployment wrapper intentionally requires an interactive Azure user identity. Service-principal execution is outside the scope of this guided lab.
 
@@ -106,7 +121,7 @@ After configuring `deploy.env`, run:
 
 ```bash
 ./scripts/validate.sh
-./scripts/preflight.sh infra
+ENV_FILE=/absolute/private/path/lab.env ./scripts/preflight.sh infra
 ```
 
 The first command performs source validation. The second checks the authenticated subscription, provider registration, regional VM SKU restrictions, and source-image reachability. Regional quota is subscription-specific; confirm the available **Standard ESv5 Family vCPUs** in Azure Quotas before deploying.
@@ -114,7 +129,7 @@ The first command performs source validation. The second checks the authenticate
 Then start the complete infrastructure build:
 
 ```bash
-./scripts/deploy.sh all
+ENV_FILE=/absolute/private/path/lab.env ./scripts/deploy.sh all
 ```
 
 Keep that process running in its terminal. From another terminal, use

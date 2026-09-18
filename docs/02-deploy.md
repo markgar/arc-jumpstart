@@ -3,10 +3,14 @@
 ## Configure
 
 ```bash
-cp deploy.env.example deploy.env
-${EDITOR:-vi} deploy.env
+ENV_FILE="$HOME/.config/arc-jumpstart/lab.env" # macOS example; any approved absolute path works
+mkdir -p "$(dirname "$ENV_FILE")"
+if [[ ! -f "$ENV_FILE" ]]; then
+  install -m 600 deploy.env.example "$ENV_FILE"
+fi
+${EDITOR:-vi} "$ENV_FILE"
 ./scripts/validate.sh
-./scripts/preflight.sh infra
+ENV_FILE="$ENV_FILE" ./scripts/preflight.sh infra
 ```
 
 The wrapper uses your signed-in Entra user to deploy Azure resources. Each PowerShell artifact is embedded in its Bicep-managed Run Command, avoiding a public deployment storage dependency. This is unrelated to the local Active Directory domain created inside the nested lab.
@@ -18,8 +22,8 @@ For a new lab with validated configuration and an authenticated Azure CLI user:
 
 ```bash
 ./scripts/validate.sh &&
-./scripts/preflight.sh infra &&
-./scripts/deploy.sh all
+ENV_FILE="$ENV_FILE" ./scripts/preflight.sh infra &&
+ENV_FILE="$ENV_FILE" ./scripts/deploy.sh all
 ```
 
 The [agent bootstrap runbook](00-agent-bootstrap.md) defines the inputs,
@@ -30,13 +34,13 @@ learner to construct the environment manually.
 ## Inspect or resume individual stages
 
 ```bash
-./scripts/deploy.sh 00
-./scripts/deploy.sh 10
-./scripts/deploy.sh 20-30
-./scripts/deploy.sh 40
-./scripts/deploy.sh 45
-./scripts/deploy.sh 50
-./scripts/deploy.sh 60
+ENV_FILE="$ENV_FILE" ./scripts/deploy.sh 00
+ENV_FILE="$ENV_FILE" ./scripts/deploy.sh 10
+ENV_FILE="$ENV_FILE" ./scripts/deploy.sh 20-30
+ENV_FILE="$ENV_FILE" ./scripts/deploy.sh 40
+ENV_FILE="$ENV_FILE" ./scripts/deploy.sh 45
+ENV_FILE="$ENV_FILE" ./scripts/deploy.sh 50
+ENV_FILE="$ENV_FILE" ./scripts/deploy.sh 60
 ```
 
 Stage `40` must wait for genuine Windows first-boot/OOBE completion before

@@ -4,6 +4,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "artifacts" / "scripts" / "prepare-arc-device-code-launchers.ps1"
+STAGER = ROOT / "artifacts" / "scripts" / "stage-arc-device-code-launchers.ps1"
+BICEP = ROOT / "infra" / "stages" / "arc-launchers" / "main.bicep"
 
 
 class ArcLauncherTests(unittest.TestCase):
@@ -15,8 +17,9 @@ class ArcLauncherTests(unittest.TestCase):
         for vm_name in ("JS-DC-01", "JS-SQL-01", "JS-SQL-AG-01", "JS-SQL-AG-02"):
             self.assertIn(f"'{vm_name}'", self.content)
         self.assertIn("Join-Path $env:PUBLIC 'Desktop'", self.content)
-        self.assertIn("'Connect to Azure Arc.ps1'", self.content)
+        self.assertIn("Join-Path $programRoot 'Connect to Azure Arc.ps1'", self.content)
         self.assertIn("'Connect to Azure Arc.cmd'", self.content)
+        self.assertIn("Remove-Item -LiteralPath (Join-Path $publicDesktop 'Connect to Azure Arc.ps1')", self.content)
 
     def test_domain_password_is_supplied_as_a_secure_string(self):
         self.assertIn("[securestring]$DomainAdministratorPassword", self.content)
@@ -38,6 +41,15 @@ class ArcLauncherTests(unittest.TestCase):
     def test_already_connected_guest_is_retained(self):
         self.assertIn("if ($current.status -eq 'Connected')", self.content)
         self.assertIn("Azure Arc is already connected", self.content)
+
+    def test_managed_stager_keeps_password_protected(self):
+        stager = STAGER.read_text(encoding="utf-8")
+        bicep = BICEP.read_text(encoding="utf-8")
+        self.assertIn("ConvertTo-SecureString $NestedWindowsPassword -AsPlainText -Force", stager)
+        self.assertNotIn("Write-Host $NestedWindowsPassword", stager)
+        self.assertIn("protectedScriptParameters", bicep)
+        self.assertIn("name: 'NestedWindowsPassword'", bicep)
+        self.assertIn("base64(loadTextContent('../../../artifacts/scripts/prepare-arc-device-code-launchers.ps1'))", bicep)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,8 @@ group before deploying them.
 |---|---|
 | [00-foundation](stages/00-foundation/main.bicep) | VNet, host subnet, NSG and reserved `AzureBastionSubnet` through `modules/network.bicep`. No Bastion host or public IP. |
 | [bastion](stages/bastion/main.bicep) | Independent Basic Bastion and Standard public IP against the existing access subnet. Enabled by default, submitted without waiting after `00`; not a numbered-stage dependency. |
+| [auto-shutdown](stages/auto-shutdown/main.bicep) | Independent enabled/disabled daily shutdown schedule for the existing outer host. The operator must explicitly choose the policy, time and time zone; it is applied after stage `10`. |
+| [arc-launchers](stages/arc-launchers/main.bicep) | Post-build helper, enabled by default in `all`, that securely stages interactive device-code launchers on all Windows guest public desktops. It creates no Arc machine connection and can be omitted with `PREPARE_ARC_LAUNCHERS=false`. |
 | [10-hyperv-host](stages/10-hyperv-host/main.bicep) | Azure VM, NIC and persistent data disk; [`10-init-host.ps1`](../artifacts/scripts/10-init-host.ps1) prepares the host. |
 | [20-host-network](stages/20-host-network/main.bicep) | [`20-host-network.ps1`](../artifacts/scripts/20-host-network.ps1): nested switch, NAT and DHCP. |
 | [30-images](stages/30-images/main.bicep) | [`30-download-images.ps1`](../artifacts/scripts/30-download-images.ps1): Windows/Linux image cache. |

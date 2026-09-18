@@ -18,6 +18,8 @@ inputs and required ready-environment outcome.
 | `./scripts/deploy.sh 60` | Runs one supported stage. Other numbers are `00`, `10`, `20`, `30`, `40`, `45` and `50`. Use for scoped recovery and then continue with successors. |
 | `./scripts/deploy.sh 20-30` | Starts image downloads and configures the independent host network while they run, then requires successful download completion. Requires a ready stage `10` host; do not use while either earlier operation is active. |
 | `./scripts/deploy.sh bastion` | Submits only the independent Bastion deployment with `--no-wait`, against an existing foundation network. Explicitly requests Bastion even when `DEPLOY_BASTION=false`; requires only the four Azure target settings, not guest credentials. Does not verify readiness. |
+| `./scripts/deploy.sh auto-shutdown` | Creates, updates, enables or disables only the outer host's daily Azure auto-shutdown schedule. It never replays host initialization or nested infrastructure stages. |
+| `./scripts/deploy.sh arc-launchers` | Creates/tags the dedicated Arc resource group and securely stages **Connect to Azure Arc** on all four Windows guest public desktops. It does not connect any machine; the learner completes device-code authentication interactively. |
 | `./scripts/lab.sh status` | Reports outer host power state only; not whole-lab readiness. |
 | `./scripts/lab.sh build-status` | Discovers every active canonical stage and displays each existing Managed Run Command instance view. If none is active, displays the most recently started stage. Does not launch a VM command. |
 | `./scripts/lab.sh stage-log 60` | Displays the latest stage transcript through `show-stage-log.py`, suppressing startup headers and redacting configured sensitive values. Raw host files remain sensitive. |
@@ -29,12 +31,14 @@ inputs and required ready-environment outcome.
 
 ## Normal automated setup
 
-With a populated private `deploy.env` and an authenticated Azure CLI user:
+With a populated owner-only environment file outside the repository and an
+authenticated Azure CLI user:
 
 ```bash
+ENV_FILE=/absolute/private/path/lab.env
 ./scripts/validate.sh &&
-./scripts/preflight.sh infra &&
-./scripts/deploy.sh all
+ENV_FILE="$ENV_FILE" ./scripts/preflight.sh infra &&
+ENV_FILE="$ENV_FILE" ./scripts/deploy.sh all
 ```
 
 Azure CLI and Python 3 are required. The wrapper currently rejects service
@@ -51,9 +55,25 @@ status. After Azure accepts the request, the build does not monitor it.
 Azure retains any later provisioning errors in the independent deployment;
 they are not reflected in the exit code of a successful submission.
 
-The wrappers do not source `deploy.env` as shell code. Use literal `KEY=value`
-lines without quotes or `export`. Do not print the file or put it in version
-control.
+The wrappers do not source the environment file as shell code. Use literal
+`KEY=value` lines without quotes or `export`. Do not print the file or put it
+in version control. The ignored repository-root `deploy.env` is retained as a
+compatibility fallback; durable external storage is recommended, especially
+for disposable worktrees.
+
+`AUTO_SHUTDOWN_ENABLED` has no implicit default. For every new lab, ask the
+operator whether to enable it and record `true` or `false`. When enabled,
+`AUTO_SHUTDOWN_TIME` is a 24-hour `HHmm` value and
+`AUTO_SHUTDOWN_TIME_ZONE` is a Windows time-zone ID. The example suggests
+`2200` and `Central Standard Time`, but both are operator decisions. Change the
+policy later with `./scripts/deploy.sh auto-shutdown`; do not rerun stage `10`.
+
+`deploy.sh all` stages the Arc desktop launchers after stage `60` by default.
+Set `PREPARE_ARC_LAUNCHERS=false` to opt out. Staging does not install or
+connect Arc; it only places the clickable helper and approved non-secret Azure
+target identifiers on the guest desktops. `ARC_RESOURCE_GROUP` defaults to
+`<AZURE_RESOURCE_GROUP>-arc`, and `ARC_LOCATION` defaults to
+`AZURE_LOCATION`; either can be overridden.
 
 ## Live progress from the host
 

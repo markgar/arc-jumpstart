@@ -60,6 +60,20 @@ After stage `00`, the wrapper submits Bastion without waiting, then runs stages
 Azure finishes Bastion independently; the build does not monitor it.
 Set `DEPLOY_BASTION=false` only if you want to omit it.
 
+Daily auto-shutdown is supported but has no silent default. Before a new build,
+choose `AUTO_SHUTDOWN_ENABLED=true` or `false`; when enabled, also choose the
+daily `HHmm` time and Windows time-zone ID. The example suggests 10:00 PM
+Central, but the operator must explicitly approve the schedule because it can
+interrupt active lab or migration work.
+
+New builds also stage a clickable **Connect to Azure Arc** launcher on every
+Windows guest's public desktop. This avoids relying on clipboard integration
+through the Bastion and nested Hyper-V console boundary. Staging is inert: it
+does not install the agent, start device authentication or connect a machine
+until the learner opens it. Set `PREPARE_ARC_LAUNCHERS=false` to omit the
+launchers. Unless overridden, the dedicated Arc resource group is named by
+appending `-arc` to the infrastructure resource group and uses the same region.
+
 ## Quick start
 
 ### Let an attached agent run it
@@ -80,16 +94,21 @@ the conversation remains available for questions and one-shot status checks.
 
 ### Run it yourself
 
+Keep credentials outside the repository. On macOS, one convenient location is
+shown below; any approved owner-only absolute path works:
+
 ```bash
-if [[ ! -f deploy.env ]]; then
-  cp deploy.env.example deploy.env
+ENV_FILE="$HOME/.config/arc-jumpstart/lab.env"
+mkdir -p "$(dirname "$ENV_FILE")"
+if [[ ! -f "$ENV_FILE" ]]; then
+  install -m 600 deploy.env.example "$ENV_FILE"
 fi
-# Edit deploy.env and replace every CHANGEME value.
+# Edit $ENV_FILE and replace every CHANGEME value.
 
 az login
 ./scripts/validate.sh &&
-./scripts/preflight.sh infra &&
-./scripts/deploy.sh all
+ENV_FILE="$ENV_FILE" ./scripts/preflight.sh infra &&
+ENV_FILE="$ENV_FILE" ./scripts/deploy.sh all
 ```
 
 Keep that terminal open. In another terminal, request a one-shot progress view
@@ -109,7 +128,9 @@ image downloads run while the nested network is configured; all nested guests
 start before per-guest Windows readiness checks; and SQL installs run on the
 three guests in parallel. Stage `40` still requires both networking and images
 to succeed, and domain/cluster readiness gates remain mandatory.
-Use `./scripts/lab.sh status`, `stop`, and `start` for lifecycle operations; it reads only the non-secret Azure identifiers it needs from `deploy.env`.
+Use `ENV_FILE=/absolute/private/path/lab.env ./scripts/lab.sh status`, `stop`,
+and `start` for lifecycle operations. Use the same private file for deployment,
+status, and recovery.
 
 During a long-running stage, `./scripts/lab.sh build-status` discovers all active
 canonical stages and reads their existing Managed Run Command state, elapsed

@@ -40,18 +40,62 @@ repeated routine confirmation questions. See the
 [first clean-room attempt](02-clean-room-lessons.md) for observed region/quota,
 Bastion and interrupted-run lessons, and recommendations not yet implemented.
 
-Create the ignored configuration file only if it does not already exist:
+## Default decisions and required questions
+
+Apply these defaults for a requested new lab. Users may override any
+non-safety setting:
+
+| Decision | Default |
+|---|---|
+| Azure identity | Current authenticated Azure CLI user |
+| Region | `westus2` |
+| Resource group | `rg-arc-jumpstart-v2` |
+| Name prefix | `jsarc` |
+| Host size | `Standard_E16s_v7` |
+| Host data disk | 1 TiB Premium SSD |
+| Browser access | Bastion enabled and submitted independently |
+| Images and SQL media | URLs and file names in `deploy.env.example` |
+| Configuration | Durable owner-only file outside the repository |
+| Host, DSRM and SQL service passwords | Generate unique strong values directly in the approved private file when the user has not supplied them |
+| Nested Windows password | The documented source-image password, unless the image source is overridden |
+| Auto-shutdown | Ask whether to enable it, and if enabled ask for the daily time and time zone; never infer consent from repository defaults |
+| Arc desktop launchers | Stage on all Windows guests by default; they remain inert until the learner opens one. Allow `PREPARE_ARC_LAUNCHERS=false` as an override |
+| Execution | Validation, infrastructure preflight and `deploy.sh all` in a separate terminal or asynchronous process |
+| Learning exercises | Stop after stage `60`; no Arc onboarding, assessment or migration |
+
+The agent still requires explicit approval for the Azure subscription and
+dedicated resource group, the billable footprint and applicable licensing
+scope. Auto-shutdown is also an explicit setup choice because it can interrupt
+active learner, replication or migration work. If the target resource group or matching lab resources already exist,
+stop and establish new deployment versus recovery; never reuse or replace them
+implicitly. Ask again when a region/SKU fallback changes residency or cost, or
+when recovery requires deletion, rebuild, credential reset or another
+destructive action.
+
+Do not ask the user to choose routine implementation details already represented
+by these defaults. Discover Azure CLI state, SKU availability, source
+reachability and existing-resource state directly. A failed preflight is a
+reason to present the specific blocked decision, not to restart the entire
+questionnaire.
+
+Keep the configuration in approved durable, owner-only storage outside the
+repository. The exact location is operator-specific. On macOS,
+`$HOME/.config/arc-jumpstart/lab.env` is a convenient example:
 
 ```bash
-if [[ ! -f deploy.env ]]; then
-  cp deploy.env.example deploy.env
+ENV_FILE="$HOME/.config/arc-jumpstart/lab.env"
+mkdir -p "$(dirname "$ENV_FILE")"
+if [[ ! -f "$ENV_FILE" ]]; then
+  install -m 600 deploy.env.example "$ENV_FILE"
 fi
 ```
 
 Populate it without displaying secret values. It contains literal `KEY=value`
 data, not shell code: do not `source` it, add `export`, or surround values with
-shell quotes. An alternative private file can be selected with `ENV_FILE`;
-use the same file consistently for all wrappers. See the [script reference](../scripts/README.md).
+shell quotes. Set `ENV_FILE` to the chosen absolute path and use the same file
+consistently for all wrappers. The legacy ignored repository-root `deploy.env`
+remains a fallback, but it is not recommended for disposable worktrees. See the
+[script reference](../scripts/README.md).
 
 For disposable worktree sessions, keep that private `ENV_FILE` in approved
 durable storage outside the worktree with owner-only permissions. Session
@@ -78,8 +122,8 @@ From the repository root, after configuration and Azure authentication:
 
 ```bash
 ./scripts/validate.sh &&
-./scripts/preflight.sh infra &&
-./scripts/deploy.sh all
+ENV_FILE=/absolute/private/path/lab.env ./scripts/preflight.sh infra &&
+ENV_FILE=/absolute/private/path/lab.env ./scripts/deploy.sh all
 ```
 
 The `&&` chain prevents deployment after failed source validation or preflight.

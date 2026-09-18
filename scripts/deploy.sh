@@ -18,7 +18,7 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ ! -f "$env_file" ]]; then
-  echo "Missing $env_file. Copy deploy.env.example to deploy.env and fill in the values." >&2
+  echo "Missing $env_file. Copy deploy.env.example to an owner-only file and set ENV_FILE to its absolute path." >&2
   exit 1
 fi
 
@@ -43,6 +43,8 @@ load_env_file() {
       AZURE_SUBSCRIPTION_ID|AZURE_LOCATION|AZURE_RESOURCE_GROUP|NAME_PREFIX|\
       HOST_ADMIN_USERNAME|HOST_ADMIN_PASSWORD|NESTED_WINDOWS_PASSWORD|\
       SAFE_MODE_PASSWORD|SQL_SERVICE_ACCOUNT_PASSWORD|DEPLOY_BASTION|\
+      AUTO_SHUTDOWN_ENABLED|AUTO_SHUTDOWN_TIME|AUTO_SHUTDOWN_TIME_ZONE|\
+      PREPARE_ARC_LAUNCHERS|ARC_RESOURCE_GROUP|ARC_LOCATION|\
       HOST_VM_SIZE|HOST_DATA_DISK_SIZE_GB|IMAGE_SOURCE_URL|\
       IMAGE_SOURCE_SAS_TOKEN|WINDOWS_IMAGE_FILE_NAME|SQL_DOWNLOAD_URL|\
       LINUX_IMAGE_FILE_NAME)
@@ -65,7 +67,7 @@ required_values=(
   AZURE_RESOURCE_GROUP
   NAME_PREFIX
 )
-if [[ "$requested_stage" != bastion ]]; then
+if [[ "$requested_stage" != bastion && "$requested_stage" != auto-shutdown ]]; then
   required_values+=(
     HOST_ADMIN_USERNAME
     HOST_ADMIN_PASSWORD
@@ -82,7 +84,29 @@ for variable_name in "${required_values[@]}"; do
   fi
 done
 
-if [[ "$requested_stage" != bastion ]]; then
+ARC_RESOURCE_GROUP="${ARC_RESOURCE_GROUP:-${AZURE_RESOURCE_GROUP}-arc}"
+ARC_LOCATION="${ARC_LOCATION:-$AZURE_LOCATION}"
+
+if [[ "$requested_stage" == all || "$requested_stage" == auto-shutdown ]]; then
+  for variable_name in AUTO_SHUTDOWN_ENABLED AUTO_SHUTDOWN_TIME AUTO_SHUTDOWN_TIME_ZONE; do
+    if [[ -z "${!variable_name:-}" || "${!variable_name}" == "CHANGEME" ]]; then
+      echo "$variable_name must be explicitly set in $env_file for $requested_stage." >&2
+      exit 1
+    fi
+  done
+fi
+
+if [[ "$requested_stage" == arc-launchers || \
+      ("$requested_stage" == all && "${PREPARE_ARC_LAUNCHERS:-true}" == true) ]]; then
+  for variable_name in ARC_RESOURCE_GROUP ARC_LOCATION; do
+    if [[ -z "${!variable_name:-}" || "${!variable_name}" == "CHANGEME" ]]; then
+      echo "$variable_name must be set in $env_file for arc-launchers." >&2
+      exit 1
+    fi
+  done
+fi
+
+if [[ "$requested_stage" != bastion && "$requested_stage" != auto-shutdown ]]; then
   PASSWORD_HOST="$HOST_ADMIN_PASSWORD" \
   PASSWORD_DSRM="$SAFE_MODE_PASSWORD" \
   PASSWORD_SQL_SERVICE="$SQL_SERVICE_ACCOUNT_PASSWORD" \
@@ -109,7 +133,7 @@ PY
 fi
 
 if [[ -z "$requested_stage" ]]; then
-  echo "Usage: scripts/deploy.sh <00|10|20|30|40|45|50|60|20-30|all|bastion>" >&2
+  echo "Usage: scripts/deploy.sh <00|10|20|30|40|45|50|60|20-30|all|bastion|auto-shutdown|arc-launchers>" >&2
   exit 1
 fi
 
@@ -118,9 +142,17 @@ case "$requested_stage" in
   00|10|20|30|40|45|50|60) stages=("$requested_stage") ;;
   20-30) stages=(20 30) ;;
   all) ;;
-  bastion) stages=() ;;
+  bastion|auto-shutdown|arc-launchers) stages=() ;;
   *)
     echo "Unknown stage: $requested_stage" >&2
+    exit 1
+    ;;
+esac
+
+case "${PREPARE_ARC_LAUNCHERS:-true}" in
+  true|false) ;;
+  *)
+    echo "PREPARE_ARC_LAUNCHERS must be true or false." >&2
     exit 1
     ;;
 esac
@@ -132,6 +164,20 @@ case "${DEPLOY_BASTION:-true}" in
     exit 1
     ;;
 esac
+
+if [[ "$requested_stage" == all || "$requested_stage" == auto-shutdown ]]; then
+  case "$AUTO_SHUTDOWN_ENABLED" in
+    true|false) ;;
+    *)
+      echo "AUTO_SHUTDOWN_ENABLED must be true or false." >&2
+      exit 1
+      ;;
+  esac
+  if [[ ! "$AUTO_SHUTDOWN_TIME" =~ ^([01][0-9]|2[0-3])[0-5][0-9]$ ]]; then
+    echo "AUTO_SHUTDOWN_TIME must use 24-hour HHmm format." >&2
+    exit 1
+  fi
+fi
 
 stage_directory() {
   case "$1" in
@@ -325,7 +371,7 @@ write_stage_parameters() {
   PARAM_NAME_PREFIX="$NAME_PREFIX" \
   PARAM_RUN_ID="$run_id" \
   PARAM_HOST_SUBNET_ID="$host_subnet_id" \
-  PARAM_HOST_VM_SIZE="${HOST_VM_SIZE:-Standard_E16s_v5}" \
+  PARAM_HOST_VM_SIZE="${HOST_VM_SIZE:-Standard_E16s_v7}" \
   PARAM_HOST_ADMIN_USERNAME="$HOST_ADMIN_USERNAME" \
   PARAM_HOST_ADMIN_PASSWORD="$HOST_ADMIN_PASSWORD" \
   PARAM_HOST_DATA_DISK_SIZE_GB="${HOST_DATA_DISK_SIZE_GB:-1024}" \
@@ -455,6 +501,74 @@ deploy_bastion() {
     --output none
 }
 
+deploy_auto_shutdown() {
+  require_deployment 10
+  echo "==> Optional auto-shutdown: ${AUTO_SHUTDOWN_ENABLED} at ${AUTO_SHUTDOWN_TIME} (${AUTO_SHUTDOWN_TIME_ZONE})"
+  az deployment group create \
+    --name arc-jumpstart-auto-shutdown \
+    --resource-group "$AZURE_RESOURCE_GROUP" \
+    --template-file "$repo_root/infra/stages/auto-shutdown/main.bicep" \
+    --parameters \
+      location="$AZURE_LOCATION" \
+      namePrefix="$NAME_PREFIX" \
+      enabled="$AUTO_SHUTDOWN_ENABLED" \
+      shutdownTime="$AUTO_SHUTDOWN_TIME" \
+      timeZoneId="$AUTO_SHUTDOWN_TIME_ZONE" \
+    --output table
+}
+
+deploy_arc_launchers() {
+  require_deployment 60
+  echo "==> Arc launchers: preparing dedicated resource group and guest desktops"
+  az group create \
+    --name "$ARC_RESOURCE_GROUP" \
+    --location "$ARC_LOCATION" \
+    --tags ArcSQLServerExtensionDeployment=LicenseOnly \
+    --output none
+
+  local parameter_file run_id
+  umask 077
+  parameter_file="$(mktemp "${TMPDIR:-/tmp}/arc-jumpstart-parameters.XXXXXX")"
+  temporary_files+=("$parameter_file")
+  run_id="$(date -u +%Y%m%d%H%M%S)"
+
+  PARAM_LOCATION="$AZURE_LOCATION" \
+  PARAM_NAME_PREFIX="$NAME_PREFIX" \
+  PARAM_SUBSCRIPTION_ID="$AZURE_SUBSCRIPTION_ID" \
+  PARAM_ARC_RESOURCE_GROUP="$ARC_RESOURCE_GROUP" \
+  PARAM_ARC_LOCATION="$ARC_LOCATION" \
+  PARAM_NESTED_WINDOWS_PASSWORD="$NESTED_WINDOWS_PASSWORD" \
+  PARAM_RUN_ID="$run_id" \
+  python3 - "$parameter_file" <<'PY'
+import json
+import os
+import sys
+
+document = {
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {"value": os.environ["PARAM_LOCATION"]},
+        "namePrefix": {"value": os.environ["PARAM_NAME_PREFIX"]},
+        "subscriptionId": {"value": os.environ["PARAM_SUBSCRIPTION_ID"]},
+        "arcResourceGroup": {"value": os.environ["PARAM_ARC_RESOURCE_GROUP"]},
+        "arcLocation": {"value": os.environ["PARAM_ARC_LOCATION"]},
+        "nestedWindowsPassword": {"value": os.environ["PARAM_NESTED_WINDOWS_PASSWORD"]},
+        "runId": {"value": os.environ["PARAM_RUN_ID"]},
+    },
+}
+with open(sys.argv[1], "w", encoding="utf-8") as stream:
+    json.dump(document, stream)
+PY
+
+  az deployment group create \
+    --name arc-jumpstart-arc-launchers \
+    --resource-group "$AZURE_RESOURCE_GROUP" \
+    --template-file "$repo_root/infra/stages/arc-launchers/main.bicep" \
+    --parameters "@$parameter_file" \
+    --output table
+}
+
 deploy_script_stage() {
   local stage="$1"
   local completion_mode="${2:-wait}"
@@ -523,6 +637,16 @@ if [[ "$requested_stage" == bastion ]]; then
   exit 0
 fi
 
+if [[ "$requested_stage" == auto-shutdown ]]; then
+  deploy_auto_shutdown
+  exit 0
+fi
+
+if [[ "$requested_stage" == arc-launchers ]]; then
+  deploy_arc_launchers
+  exit 0
+fi
+
 for stage in "${stages[@]}"; do
   if [[ "$stage" == "00" ]]; then
     deploy_foundation
@@ -546,9 +670,16 @@ for stage in "${stages[@]}"; do
   else
     require_predecessors "$stage"
     deploy_script_stage "$stage"
+    if [[ "$stage" == "10" && "$requested_stage" == all ]]; then
+      deploy_auto_shutdown
+    fi
   fi
 done
 
 if [[ -n "$bastion_notice" ]]; then
   echo "$bastion_notice"
+fi
+
+if [[ "$requested_stage" == all && "${PREPARE_ARC_LAUNCHERS:-true}" == true ]]; then
+  deploy_arc_launchers
 fi

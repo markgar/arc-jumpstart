@@ -16,7 +16,7 @@ param tags object = {
 param hostSubnetId string
 
 @description('VM size. Must support nested virtualization (Dv3/Ev3 or newer) and have enough RAM for the nested guests.')
-param hostVmSize string = 'Standard_E16s_v5'
+param hostVmSize string = 'Standard_E16s_v7'
 
 @description('Local administrator name on the Hyper-V host.')
 param adminUsername string

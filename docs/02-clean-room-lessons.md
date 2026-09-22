@@ -40,9 +40,8 @@ The saved correction is:
 
 [`test-bastion.py`](../scripts/test-bastion.py) checks compiled resource graphs
 and runs the wrapper against a fake Azure CLI, including a complete core
-sequence while Bastion is running or failed. Live verification of this new
-parallel submission path is still outstanding; the stopped attempt used the
-old synchronous baseline.
+sequence while Bastion is running or failed. A later live build also used the
+independent submission path without making Bastion a core-stage gate.
 
 ## Region availability and quota are separate checks
 
@@ -181,13 +180,11 @@ not exercised or monitored in this recovery.
   longer says to run every stage serially, which contradicted `all` and the
   supported `20-30` recovery overlap.
 
-### Operator experience and remaining recommendations
+### Operator experience and recommendation status
 
-1. **Preserve configuration continuity.** The missing durable `ENV_FILE` was the
-   only blocker requiring user action. `docs/00-agent-bootstrap.md` and
-   `scripts/README.md` should make choosing durable owner-only storage and
-   retaining a non-secret handoff reference part of initial deployment, not only
-   recovery advice.
+1. **Preserve configuration continuity — implemented.** The bootstrap,
+   prerequisites, README, and script reference now require a durable owner-only
+   `ENV_FILE` outside disposable worktrees and explain its credential mapping.
 2. **Document the authorized host-credential recovery that was required.** Add
    a bounded procedure to `docs/06-troubleshooting-cleanup.md` for an existing
    host whose local administrator secret is lost. It must require the exact
@@ -198,7 +195,7 @@ not exercised or monitored in this recovery.
    did not prove that the interrupted wrapper performed its restart and agent
    wait. A durable wrapper-level receipt would make that distinction
    machine-readable.
-4. **Keep progress visibility bounded and redacted.** On this baseline,
+4. **Keep progress visibility bounded and redacted — implemented.** On this baseline,
    `stage-log` safely returned a transcript tail but could itself take about a
    minute because its new Action Run Command queued behind the active stage.
    Stage `40` also displayed transient credential errors before successful

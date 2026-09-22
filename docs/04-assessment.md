@@ -39,7 +39,9 @@ Configuration-only sizing works immediately, but a useful assessment should incl
 2. Install `AzureMigrateCollectorForWindows` or `AzureMigrateCollectorForLinux` from the portal, Azure CLI, or Azure Policy. Configure its `migrateProjects` setting with the Azure Migrate project resource ID and location shown in the project's data-collection instructions.
 3. Verify outbound access to `https://*.migration.windowsazure.com`.
 4. Wait for the extension provisioning status to reach **Succeeded**, then allow 15–30 minutes for the first data to appear.
-5. Generate load on `JumpstartDB` and the Linux VM.
+5. If the exercise includes performance sizing, generate representative load on
+   `JumpstartDB` and the Linux VM. Idle utilization is valid for demonstrating
+   oversubscription, but it is not representative production sizing data.
 6. Collect at least 24 hours of data; longer windows produce better recommendations.
 7. Recalculate the default assessments and business cases.
 

@@ -46,8 +46,8 @@ Linux development VM. See [Windows prerequisites](01-prerequisites.md#windows-re
 
 Once those inputs are approved, use documented defaults and proceed without
 repeated routine confirmation questions. See the
-[first clean-room attempt](02-clean-room-lessons.md) for observed region/quota,
-Bastion and interrupted-run lessons, and recommendations not yet implemented.
+[clean-room lessons](02-clean-room-lessons.md) for observed region/quota,
+Bastion and interrupted-run evidence, and current recommendation status.
 
 ## Default decisions and required questions
 
@@ -153,7 +153,7 @@ questions promptly. On a status request, perform one bounded query and return
 the result:
 
 ```bash
-ENV_FILE=/absolute/private/path/lab.local.env ./scripts/lab.sh build-status
+ENV_FILE=/absolute/private/path/lab.env ./scripts/lab.sh build-status
 ```
 
 `build-status` discovers every concurrently active canonical stage, so the

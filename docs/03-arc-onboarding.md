@@ -22,7 +22,9 @@ Before onboarding the three SQL machines, set this tag on the Arc resource group
 ArcSQLServerExtensionDeployment=LicenseOnly
 ```
 
-The lab uses SQL Server Developer edition. `LicenseOnly` is the appropriate Arc SQL license type for Developer/Evaluation/Express editions; Developer edition is reported on a $0 meter.
+The lab installs SQL Server 2025 Enterprise Developer. Arc inventory reports
+the edition as `Developer`; `LicenseOnly` is the appropriate Arc SQL license
+type and uses the $0 meter.
 
 ## Generate a single-server onboarding script
 
@@ -176,18 +178,17 @@ Repeat the process for:
 > Arc by policy, leaving it out does not block onboarding or assessing the
 > remaining guests; record that scope decision in the assessment.
 
-From the Hyper-V host:
+Fresh builds place **Connect to Azure Arc.cmd** on each Windows guest's public
+desktop. From the Hyper-V host:
 
 1. Open Hyper-V Manager.
 2. Connect to one nested VM.
 3. Sign in as a local or domain administrator.
-4. Open Windows PowerShell as Administrator.
-5. Install the Connected Machine agent from the generated script, stopping
-   before its `azcmagent connect` command.
-6. Run `azcmagent check --location <arc-region>` and resolve required failures.
-7. Run the generated `azcmagent connect` command.
-8. Wait for `azcmagent show` to report `Connected`.
-9. Confirm that the machine appears in **Azure Arc > Machines** before continuing.
+4. Double-click **Connect to Azure Arc.cmd** and approve elevation.
+5. Confirm its required endpoint check succeeds.
+6. Complete the displayed device-code flow on your own computer.
+7. Wait for the launcher and `azcmagent show` to report `Connected`.
+8. Confirm that the machine appears in **Azure Arc > Machines** before continuing.
 
 Useful local checks:
 
@@ -197,32 +198,13 @@ azcmagent check
 Get-Service himds
 ```
 
-Browser-based Bastion clipboard does not reliably pass through the second
-Hyper-V VMConnect console boundary. Do not require learners to type or paste a
-portal-generated onboarding script into that console. An operator can use
-[`prepare-arc-device-code-launchers.ps1`](../artifacts/scripts/prepare-arc-device-code-launchers.ps1)
-from the Hyper-V host to stage a non-secret **Connect to Azure Arc** launcher on
-the guests' public desktops. The learner then opens the launcher, completes the
-device login on their own computer and observes the final connection result.
-The launcher records network-check and final status evidence locally but
-intentionally does not record the short-lived device code.
+Browser-based Bastion clipboard does not reliably pass through the Hyper-V
+VMConnect boundary. The launcher avoids pasting a generated script and records
+network-check and final status evidence without recording the short-lived
+device code.
 
-Run the preparation script in an elevated PowerShell session on the Hyper-V
-host. Prompt for the domain administrator password as a secure string so it is
-not placed in command history:
-
-```powershell
-$domainPassword = Read-Host 'JUMPSTART\Administrator password' -AsSecureString
-.\prepare-arc-device-code-launchers.ps1 `
-    -SubscriptionId '<subscription-id>' `
-    -ArcResourceGroup '<arc-resource-group>' `
-    -ArcLocation '<arc-region>' `
-    -DomainAdministratorPassword $domainPassword
-```
-
-For an agent-managed lab, the supported workstation entry point performs the
-same staging through a protected Managed Run Command, without requiring
-clipboard or keyboard input in the Hyper-V console:
+If the launcher is missing, stage it through the supported workstation entry
+point:
 
 ```bash
 ENV_FILE=/absolute/private/path/lab.env ./scripts/deploy.sh arc-launchers
@@ -235,19 +217,9 @@ retains that dedicated resource group, applies
 `ArcSQLServerExtensionDeployment=LicenseOnly`, and stages the launchers. It
 does not connect any guest or begin device-code authentication.
 
-`deploy.sh all` runs this staging step by default after stage `60`, so a fresh
-lab should already show **Connect to Azure Arc.cmd** on each Windows guest's
-public desktop. Set `PREPARE_ARC_LAUNCHERS=false` before deployment to omit it.
-Only the clickable `.cmd` file is placed on the desktop; its PowerShell payload
-is retained under `C:\ProgramData\ArcJumpstart`. The launcher is intentionally
-safe to ignore until the learner is ready.
-
-The script defaults to all four Windows guests. Use `-VMNames` for an approved
-first wave such as `JS-SQL-01`. It stages only the launcher and non-secret Azure
-target identifiers; it does not run `azcmagent connect`. On the guest, the
-learner double-clicks **Connect to Azure Arc.cmd**, approves elevation, observes
-the mandatory network check, and completes the displayed device-code login on
-their own computer.
+`deploy.sh all` runs this staging step by default after stage `60`. Set
+`PREPARE_ARC_LAUNCHERS=false` before deployment to omit it. Staging is inert:
+it does not install the agent, start authentication, or connect a machine.
 
 > [!IMPORTANT]
 > The nested guests run on a Hyper-V host that is itself an Azure VM. This is an evaluation-only topology. Before onboarding the full set, onboard one disposable guest and confirm it is accepted as a Hyper-V VM rather than detected as an Azure VM. Check whether Azure IMDS (`169.254.169.254`) or an Azure VM Guest Agent is reachable inside the guest. If Arc rejects the guest as Azure-hosted, follow Microsoft's [evaluation procedure for Arc on an Azure VM](https://learn.microsoft.com/azure/azure-arc/servers/plan-evaluate-on-azure-virtual-machine), record the reversible changes, and retest before continuing.
@@ -278,12 +250,13 @@ When an Arc-enabled Windows server contains SQL Server, Azure normally deploys `
 
 1. Open the Arc-enabled server in the portal.
 2. Verify `WindowsAgent.SqlServer` reaches **Succeeded**; install it manually only if it is absent.
-3. Confirm the extension version is at least `1.1.2594.118`.
-4. Confirm the license type is `LicenseOnly` and the detected edition is Developer.
-5. Allow outbound HTTPS to `telemetry.<region>.arcdataservices.com`.
-6. Confirm that the SQL Server instances and databases appear under **Azure Arc > SQL Server instances**.
+3. Confirm the license type is `LicenseOnly` and the detected edition is Developer.
+4. Allow outbound HTTPS to `telemetry.<region>.arcdataservices.com`.
+5. Confirm that the SQL Server instances and databases appear under **Azure Arc > SQL Server instances**.
 
-Arc SQL migration assessment normally runs weekly. Open each Arc-enabled SQL instance, select **Migration assessment**, and choose **Run assessment**. Wait for a successful completed-assessment timestamp before synchronizing the Azure Migrate project.
+Open each Arc-enabled SQL instance, select **Migration assessment**, and choose
+**Run assessment**. Wait for a successful completed-assessment timestamp before
+synchronizing the Azure Migrate project.
 
 ## Verify agent versions
 

@@ -1,0 +1,49 @@
+resources
+// __RESOURCE_GROUP_FILTER__
+| where type in~ (
+    "microsoft.azurearcdata/sqlserverinstances",
+    "microsoft.azurearcdata/sqlserverinstances/availabilitygroups",
+    "microsoft.azurearcdata/sqlserverinstances/databases",
+    "microsoft.hybridcompute/machines",
+    "microsoft.hybridcompute/machines/extensions",
+    "microsoft.azurearcdata/sqlserverlicenses",
+    "microsoft.azurearcdata/sqlserveresulicenses"
+)
+| where type !~ "microsoft.hybridcompute/machines/extensions"
+    or tostring(properties.type) in~ (
+        "WindowsAgent.SqlServer",
+        "LinuxAgent.SqlServer"
+    )
+| extend RecordType = case(
+    type =~ "microsoft.azurearcdata/sqlserverinstances", "SQL_INSTANCE",
+    type =~ "microsoft.azurearcdata/sqlserverinstances/availabilitygroups", "AVAILABILITY_GROUP",
+    type =~ "microsoft.azurearcdata/sqlserverinstances/databases", "DATABASE",
+    type =~ "microsoft.hybridcompute/machines", "ARC_MACHINE",
+    type =~ "microsoft.hybridcompute/machines/extensions", "SQL_EXTENSION",
+    type =~ "microsoft.azurearcdata/sqlserverlicenses", "SQL_LICENSE",
+    type =~ "microsoft.azurearcdata/sqlserveresulicenses", "ESU_LICENSE",
+    "OTHER"
+)
+| extend ParentJoinKey = case(
+    RecordType == "SQL_INSTANCE",
+        tolower(tostring(properties.containerResourceId)),
+    RecordType == "AVAILABILITY_GROUP",
+        tolower(substring(id, 0, indexof(tolower(id), "/availabilitygroups/"))),
+    RecordType == "DATABASE",
+        tolower(substring(id, 0, indexof(tolower(id), "/databases/"))),
+    RecordType == "SQL_EXTENSION",
+        tolower(substring(id, 0, indexof(tolower(id), "/extensions/"))),
+    ""
+)
+| project
+    RecordType,
+    JoinKey = tolower(id),
+    ParentJoinKey,
+    ResourceId = id,
+    ResourceName = name,
+    SubscriptionId = subscriptionId,
+    ResourceGroup = resourceGroup,
+    Location = location,
+    Tags = tostring(tags),
+    Properties = tostring(properties)
+| order by RecordType asc, ParentJoinKey asc, ResourceName asc

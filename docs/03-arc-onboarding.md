@@ -1,55 +1,42 @@
-# Manually onboard the guests to Azure Arc
+# Complete user-authenticated Azure Arc setup
 
-The infrastructure deliberately stops before Arc onboarding. Stages `00` through `60` prepare the machines, domain, SQL instances, sample databases, and availability group, but do not install or connect Azure Arc or the Azure extension for SQL Server. Generate and run the onboarding commands yourself so you experience the identity, scope, agent, networking, and troubleshooting steps used with real servers.
+The agent prepares the machines, domain, SQL instances, sample databases,
+availability group, Arc resource group, licensing tag, and desktop launchers.
+It cannot connect the guests because no Arc credentials are stored in the
+repository. The user completes this prerequisite interactively with their own
+Azure identity. Service-principal and unattended onboarding are out of scope.
 
-Before starting the Arc and migration exercises, run the broader provider check:
+Before Arc setup, run the broader provider check:
 
 ```bash
 ./scripts/preflight.sh full
 ```
 
-## Decide the Arc resource scope
+## Verify the prepared Arc target
 
-Create or choose:
+The agent should already have:
 
 - A resource group dedicated to Arc-enabled resources.
 - An Azure region supported by Azure Arc-enabled servers.
-- Consistent tags such as `environment=jumpstart`, `site=hyperv-lab`, and `wave=assessment`.
+- The `ArcSQLServerExtensionDeployment=LicenseOnly` tag.
+- A **Connect to Azure Arc.cmd** launcher on each Windows guest's public desktop.
 
-Before onboarding the three SQL machines, set this tag on the Arc resource group:
+If those items are missing, rerun the launcher stage before asking the user to
+connect a guest:
 
-```text
-ArcSQLServerExtensionDeployment=LicenseOnly
+```bash
+ENV_FILE=/absolute/private/path/lab.env ./scripts/deploy.sh arc-launchers
 ```
 
 The lab installs SQL Server 2025 Enterprise Developer. Arc inventory reports
 the edition as `Developer`; `LicenseOnly` is the appropriate Arc SQL license
 type and uses the $0 meter.
 
-## Generate a single-server onboarding script
+## Authentication boundary
 
-In the Azure portal:
-
-1. Open **Azure Arc**.
-2. Select **Machines > Add/Create > Add a machine**.
-3. Choose **Add a single server**.
-4. Select your subscription, Arc resource group, region, operating system, connectivity method, and tags.
-5. Download or copy the generated script.
-
-Use the portal-generated script rather than a script committed to this repository. It contains your selected tenant, subscription, resource group, region, and a short-lived authentication flow.
-
-## Choose the authentication workflow
-
-Arc connection authentication must match how the guest is being operated.
-These are two separate workflows; do not start one and silently fall back to
-the other.
-
-### Learner at the guest console: device code
-
-Use the portal-generated device-code flow when a learner is signed in to the
-guest and can immediately read the code, open the Microsoft sign-in page in a
-browser, and complete authentication. This is the preferred workshop path
-because the learner experiences the normal single-server onboarding flow.
+Use the device-code flow only when the user is signed in to the guest and can
+immediately read the code, open the Microsoft sign-in page, and authenticate
+with their own Azure identity.
 
 Do not use this path for an agent operating through PowerShell Direct, Azure VM
 Run Command, or another noninteractive channel. A device-code command can wait
@@ -58,46 +45,14 @@ accidentally, terminate only that waiting `azcmagent connect` process, preserve
 its non-secret result, confirm whether an Arc machine resource was created, and
 run the required network check before choosing a supported retry.
 
-### Agent-driven onboarding: service principal
-
-For explicitly requested unattended onboarding, create or reuse a dedicated,
-short-lived service principal with the built-in
-`Azure Connected Machine Onboarding` role scoped only to the dedicated Arc
-resource group. Do not grant subscription-wide Contributor merely to simplify
-the exercise. The user must approve creating or using this identity.
-
-Store its tenant ID, application/client ID, and secret in approved owner-only
-storage outside the repository and disposable worktree. Do not add them to
-`deploy.env`, paste them into chat, print them, or retain a generated connection
-command in a transcript. After the agent is installed and the pre-connect
-network check passes, the noninteractive connection has this shape:
-
-```text
-azcmagent connect
-  --subscription-id <subscription-id>
-  --resource-group <arc-resource-group>
-  --location <arc-region>
-  --tenant-id <tenant-id>
-  --service-principal-id <application-id>
-  --service-principal-secret <secret supplied only at execution time>
-```
-
-The actual invocation must remain a single command, with the secret supplied
-from protected runtime state rather than copied into repository content or
-displayed output. Avoid PowerShell transcription around this command and
-redact command arguments from any agent-visible diagnostic output.
-
 Use one SQL guest as the pilot. Require `azcmagent show` to report `Connected`
 and confirm the expected Azure Arc machine resource before onboarding the
-remaining guests. When onboarding is complete, remove the short-lived
-credential or dedicated service principal unless the user explicitly approved
-retaining it for another bounded onboarding wave. Removing that onboarding
-identity does not disconnect machines that are already connected.
+remaining guests.
 
-### Agent-driven evidence and safe logs
+### Evidence and safe logs
 
-When an agent operates through the outer Hyper-V host, retain timestamped
-per-machine evidence under `C:\ArcJumpstart\Logs` using names such as:
+The launcher retains timestamped per-machine evidence under
+`C:\ArcJumpstart\Logs` using names such as:
 
 ```text
 Arc-Onboard-JS-SQL-01-<UTC timestamp>.log
@@ -107,34 +62,30 @@ Arc-Connect-JS-SQL-01-<UTC timestamp>.log
 
 Record observable results rather than credentials or generated commands:
 
-- Outer Managed Run Command name, start/end time, execution state and exit code,
-  when that transport is used.
 - Guest name, Connected Machine agent version and `himds` service state.
 - The `azcmagent check` summary and whether every required endpoint passed.
 - Final `azcmagent show` connection state and the matching Azure Arc machine
   resource state.
-- Extension provisioning state after connection, when an extension is part of
-  the approved exercise.
+- Extension provisioning state after connection.
 
-Do not place the service-principal secret, a generated authentication script,
-device code, access token or full `azcmagent connect` arguments in these logs.
+Do not place a generated authentication script, device code, access token or
+full `azcmagent connect` arguments in these logs.
 PowerShell transcript startup headers and remote-process arguments can contain
 sensitive values even when the command output appears harmless. Do not enable
 transcription around the connect command. When reporting progress, return only
 a bounded redacted tail and the structured state above; never publish a raw
 host transcript.
 
-See Microsoft's
-[service-principal onboarding guidance](https://learn.microsoft.com/azure/azure-arc/servers/onboard-service-principal)
-and [`azcmagent connect` reference](https://learn.microsoft.com/azure/azure-arc/servers/azcmagent-connect)
+See the [`azcmagent connect` reference](https://learn.microsoft.com/azure/azure-arc/servers/azcmagent-connect)
 before execution because authentication and agent requirements can change.
 
 ## Required pre-connect network check
 
-Do not run an entire generated onboarding script without pausing at the
-connection boundary. First use its package-install portion to install the
-Connected Machine agent, but stop before `azcmagent connect`. Then run this on
-each guest, substituting the Arc resource region selected in the portal:
+The staged launcher installs the Connected Machine agent, runs the required
+check, and starts device-code connection only after the check succeeds. If the
+user follows a manual portal-generated script instead, stop before
+`azcmagent connect` and run this on each guest, substituting the Arc resource
+region selected in the portal:
 
 ```powershell
 azcmagent check --location westus2
@@ -169,10 +120,10 @@ Repeat the process for:
 - `JS-SQL-AG-02`
 
 > [!NOTE]
-> Onboard `JS-DC-01` to Arc for inventory and assessment so the exercise
+> Onboard `JS-DC-01` to Arc for inventory and assessment so the environment
 > represents the whole server estate. Installing the Connected Machine agent
 > does not change its domain-controller role. Treat it as a higher-sensitivity
-> server: add only extensions required by the exercise, verify their support
+> server: add only extensions required for assessment, verify their support
 > and permissions before deployment, and do not use this DC as the lab's
 > migration target. If an organization would exclude domain controllers from
 > Arc by policy, leaving it out does not block onboarding or assessing the
@@ -254,9 +205,9 @@ When an Arc-enabled Windows server contains SQL Server, Azure normally deploys `
 4. Allow outbound HTTPS to `telemetry.<region>.arcdataservices.com`.
 5. Confirm that the SQL Server instances and databases appear under **Azure Arc > SQL Server instances**.
 
-Open each Arc-enabled SQL instance, select **Migration assessment**, and choose
-**Run assessment**. Wait for a successful completed-assessment timestamp before
-synchronizing the Azure Migrate project.
+When all machine and SQL resources are visible, continue to
+[assessment and modeling](04-assessment.md). That guide decides whether an
+assessment must be run; Arc setup itself does not start one.
 
 ## Verify agent versions
 

@@ -1,140 +1,168 @@
-# Test and perform a Hyper-V migration
+# Migrate one database to Azure SQL Managed Instance
 
-Arc-based discovery removes the appliance from the assessment path. Hyper-V replication uses a different component: the Azure Site Recovery provider and Recovery Services agent installed directly on the Hyper-V host. An Azure Migrate appliance is not required for Hyper-V migration.
+This is the final workshop activity. Migrate only
+`JumpstartStandaloneDB` from `JS-SQL-01` to a small Azure SQL Managed Instance.
+The domain controller, Linux guest, availability group, and Hyper-V virtual
+machines are not migration targets in this exercise.
 
-Start with `JS-UBUNTU-01` or `JS-SQL-01`. Do not make the two-node availability
-group your first migration target. `JS-DC-01` may be Arc-enabled for inventory
-and assessment, but do not select it as a migration target in this lab. Moving
-a domain controller requires a separate Active Directory migration and
-recovery design rather than this workshop's generic server lift-and-shift
-exercise.
+Use native backup and restore. Microsoft describes this as the easiest SQL
+Managed Instance migration option when a database can tolerate the downtime
+needed to take and restore a full backup. Managed Instance Link, Log Replay
+Service, Azure Database Migration Service, and multi-database or AG migrations
+are deliberately out of scope.
 
-## Freeze the assessment and prepare the guest for Azure
+## Confirm the assessment and cost decision
 
-Before enabling replication:
+Before provisioning:
 
-1. Export or record the final Arc-based assessment and business case. Disable automatic synchronization if the results must remain stable.
-2. Inventory and remove all Arc extensions from the selected source, including `AzureMigrateCollectorForWindows`/`AzureMigrateCollectorForLinux` and `WindowsAgent.SqlServer` when present.
-3. Run `azcmagent disconnect`, uninstall the Connected Machine agent, and verify that its Arc-enabled server resource is deleted.
-4. Install, repair, or re-enable the appropriate Azure VM Guest Agent so the migrated Azure VM can be managed after cutover.
-5. Review the current [Arc-to-Azure migration procedure](https://learn.microsoft.com/azure/azure-arc/servers/scenario-migrate-to-azure) and [Hyper-V migration support matrix](https://learn.microsoft.com/azure/migrate/migrate-support-matrix-hyper-v-migration).
+1. Complete [assessment and inventory modeling](04-assessment.md).
+2. Confirm the assessment recommends Azure SQL Managed Instance for
+   `JumpstartStandaloneDB`, or document why the exercise intentionally differs.
+3. Confirm the source database is online and not encrypted with TDE.
+4. Review current SQL Managed Instance pricing and regional availability.
+5. Obtain explicit approval for the managed instance, storage account, expected
+   run time, and cleanup plan.
 
-Removing the Connected Machine agent alone does not remove Arc extensions. Do not test-migrate a disk that still contains the source machine's Arc identity.
+SQL Managed Instance is billable while provisioned and can take significant
+time to create or delete. Use the smallest General Purpose configuration
+currently offered in the approved region and subscription. Do not claim a
+fixed SKU or price in this repository.
 
-### Reverse the Arc-on-Azure evaluation workaround
+## Create the migration target
 
-If you used Microsoft's evaluation-only workaround, reverse every change before migration so the resulting Azure VM has normal IMDS and guest-agent behavior.
+Create a dedicated workshop resource group containing:
 
-On Windows, run as Administrator:
+- One General Purpose SQL managed instance.
+- The smallest available compute and storage suitable for the sample database.
+- A SQL Server 2025-compatible update policy.
+- A dedicated compliant subnet in the outer Azure virtual network.
+- One storage account and private container for the temporary backup.
 
-```powershell
-Remove-NetFirewallRule -Name BlockAzureIMDS -ErrorAction SilentlyContinue
-[Environment]::SetEnvironmentVariable(
-    'MSFT_ARC_TEST',
-    $null,
-    [EnvironmentVariableTarget]::Machine
-)
-Set-Service WindowsAzureGuestAgent -StartupType Automatic
-Start-Service WindowsAzureGuestAgent
+Before creation, confirm that the selected update policy can restore a backup
+from the lab's SQL Server 2025 instance. Stop rather than paying for an
+incompatible target.
+
+Keep the public endpoint disabled. The outer Hyper-V host can reach a managed
+instance placed in the same Azure virtual network; the nested
+`192.168.128.0/24` network is not an Azure subnet and must not be delegated to
+SQL Managed Instance.
+
+Use SQL authentication for this disposable exercise only if Microsoft Entra
+administration is not already configured. Store the administrator credential
+in approved owner-only storage outside the repository. Never put it in
+`deploy.env`, source control, chat, or command output.
+
+Wait for the managed instance to report **Ready** before continuing.
+
+## Back up the source database to Azure Blob Storage
+
+Create a short-lived container SAS with the permissions required to create,
+write, read, and list the backup blob. Set its expiry shortly after the
+workshop. Do not record the SAS in transcripts or repository files. In SSMS,
+connect to `192.168.128.11` as `JUMPSTART\Administrator`, create a SQL credential
+whose name is the container URL, and use the SAS token as its secret.
+
+Back up only the standalone sample database:
+
+```sql
+CREATE CREDENTIAL
+    [https://<storage-account>.blob.core.windows.net/<container>]
+WITH
+    IDENTITY = 'SHARED ACCESS SIGNATURE',
+    SECRET = '<container-sas-without-leading-question-mark>';
+GO
+
+BACKUP DATABASE [JumpstartStandaloneDB]
+TO URL = N'https://<storage-account>.blob.core.windows.net/<container>/JumpstartStandaloneDB.bak'
+WITH COPY_ONLY, COMPRESSION, CHECKSUM, STATS = 10;
+GO
+
+RESTORE VERIFYONLY
+FROM URL = N'https://<storage-account>.blob.core.windows.net/<container>/JumpstartStandaloneDB.bak'
+WITH CHECKSUM;
+GO
 ```
 
-On Ubuntu, remove the exact firewall mechanism you used, clear the systemd override, and restore the Azure Linux Agent:
+Confirm the blob exists and has a nonzero length before treating the backup as
+complete. The source database remains online; choose a quiet point so the full
+backup represents the intended workshop state.
 
-```bash
-# UFW:
-sudo ufw delete deny out from any to 169.254.169.254
+## Restore to SQL Managed Instance
 
-# Or firewalld:
-sudo firewall-cmd --permanent --direct --remove-rule ipv4 filter OUTPUT 1 \
-  -p tcp -d 169.254.169.254 -j REJECT
-sudo firewall-cmd --reload
+Connect to the managed instance with SSMS. Create the corresponding container
+credential, then restore the backup:
 
-# Or a nonpersistent iptables rule:
-sudo iptables -D OUTPUT -d 169.254.169.254 -j REJECT
+```sql
+CREATE CREDENTIAL
+    [https://<storage-account>.blob.core.windows.net/<container>]
+WITH
+    IDENTITY = 'SHARED ACCESS SIGNATURE',
+    SECRET = '<container-sas-without-leading-question-mark>';
+GO
 
-sudo systemctl unset-environment MSFT_ARC_TEST
-unset MSFT_ARC_TEST
-sudo systemctl enable walinuxagent
-sudo systemctl start walinuxagent
+RESTORE DATABASE [JumpstartStandaloneDB]
+FROM URL = N'https://<storage-account>.blob.core.windows.net/<container>/JumpstartStandaloneDB.bak';
+GO
 ```
 
-Also remove `MSFT_ARC_TEST` from any profile, `/etc/environment`, or systemd unit override where you made it persistent. If you also blocked Azure Local IMDS at `169.254.169.253`, remove that matching rule. Reboot and verify the guest agent is running and `http://169.254.169.254/metadata/instance` is reachable with the `Metadata: true` header before enabling replication.
+Monitor `sys.dm_operation_status` or the Azure portal until the restore is
+terminal. Do not submit a competing restore because the first command returned
+before the asynchronous operation completed.
 
-## Create migration resources and register the host
+## Validate the migrated database
 
-In the same Azure Migrate project:
+On the managed instance:
 
-1. Open **Execute > Migration > Start execution**.
-2. Choose migration of a server/VM to an Azure VM.
-3. Select **From replication provider (Hyper-V)**.
-4. Choose and confirm the target region. Treat this as immutable for the exercise.
-5. Select **Create resources** and wait for the migration resources to finish provisioning.
-6. Download the Hyper-V replication provider and project registration key. The key is valid for five days.
-7. Copy both files to the outer `${NAME_PREFIX}-host` VM.
-8. Install the provider and Recovery Services agent on the host.
-9. Register the host with the Azure Migrate project and select **Finalize registration**.
-10. Allow up to 15 minutes for provider-discovered guests to appear.
+```sql
+USE [JumpstartStandaloneDB];
+GO
 
-The Arc discovery inventory and the replication-provider inventory are different views. Reusing the same project does not turn Arc-discovered records into replication objects. Stop until the selected guest appears under the Hyper-V provider inventory.
+SELECT
+    DB_NAME() AS DatabaseName,
+    COUNT_BIG(*) AS ObjectCount
+FROM sys.objects;
+GO
 
-The host needs outbound HTTPS access to the endpoints in the current support matrix, including:
+SELECT
+    name,
+    state_desc,
+    compatibility_level
+FROM sys.databases
+WHERE name = N'JumpstartStandaloneDB';
+GO
+```
 
-- `login.microsoftonline.com`
-- `backup.windowsazure.com`
-- `*.hypervrecoverymanager.windowsazure.com`
-- `*.blob.core.windows.net`
-- `dc.services.visualstudio.com`
-- `time.windows.com`
+Also compare a small set of known table row counts and application queries
+between source and target. Record:
 
-Before enabling replication, confirm Secure Boot is disabled on the selected nested VM. Stage `40` does this by default because Secure Boot guests are not supported by the Hyper-V migration path.
+- Source and target identifiers.
+- Assessment recommendation and selected managed-instance configuration.
+- Backup and restore start/end times.
+- Validation queries and results.
+- Any compatibility warnings or deliberate deviations.
 
-This lab uses differencing disks. The support matrix documents VHD/VHDX but does not explicitly guarantee pre-existing differencing chains. First enable replication for one disposable guest as a stop/go test. If the provider rejects the chain, shut down the guest, flatten/merge it into a standalone dynamic VHDX, attach that disk, and retry before continuing.
+This exercise proves migration of one database. It does not prove application
+cutover, login/job migration, performance equivalence, high availability, or a
+production rollback plan.
 
-## Replicate one guest
+## Clean up
 
-1. Select `JS-UBUNTU-01` or `JS-SQL-01` from the provider-discovered workloads.
-2. Choose the target subscription, resource group, normal Azure VNet/subnet, cache storage, availability options, VM size, security settings, and disk type.
-3. Start replication.
-4. Wait for initial replication and delta synchronization to become healthy.
+After evidence is captured:
 
-Do not place the migrated VM on the nested `192.168.128.0/24` network. Keep the outer Hyper-V host allocated throughout initial replication, test migration, final synchronization, and cleanup.
+1. Drop the source and target SQL credentials that held the SAS.
+2. Delete the temporary SAS or revoke its stored access policy.
+3. Delete the backup blob and storage account if they are no longer required.
+4. With explicit approval, delete the SQL managed instance and its dedicated
+   workshop resource group.
+5. Wait for deletion to complete before assuming charges and subnet occupancy
+   have ended.
 
-Compare the migration target size with the Arc-based assessment recommendation. Document any deliberate difference.
+Do not delete the Arc Jumpstart infrastructure resource group until the entire
+workshop is complete.
 
-## Test migration
+## Microsoft references
 
-1. Choose an isolated test VNet that cannot conflict with production addresses.
-2. Run **Test migrate**.
-3. Connect to the test VM and verify boot, network, application/service state, and data.
-4. For `JS-SQL-01`, verify the instance and `JumpstartStandaloneDB`.
-5. Clean up the test migration from the portal when validation is complete.
-
-## Cut over
-
-For a final migration exercise:
-
-1. Schedule a change window.
-2. Stop application writes and confirm the latest replication cycle is healthy.
-3. Select **Migrate** and set **Shut down virtual machines and perform a planned migration with no data loss** to **Yes**.
-4. Start migration and wait for the Azure VM to be created.
-5. Validate boot, networking, guest-agent health, application/service state, and data.
-6. Select **Complete migration** to stop replication and clean up migration state.
-7. Mark a retained source as retired so host restarts and stage reruns cannot start it:
-
-   ```bash
-   ./scripts/lab.sh retire-source JS-SQL-01
-   # or: ./scripts/lab.sh retire-source JS-UBUNTU-01
-   ```
-
-8. Delete or retain the retired source guest according to the exercise plan. Do not rerun provisioning against a cut-over source unless it is intentionally restored to service.
-
-## Availability-group migration
-
-Treat the AOAG as a later exercise. Typical strategies include:
-
-- Build new Azure replicas and extend or replace the AG.
-- Migrate replicas in separate waves while preserving quorum.
-- Move to SQL Server on Azure VMs with an Azure Load Balancer or distributed network name.
-- Modernize to Azure SQL Managed Instance when the assessment supports it.
-
-A simple simultaneous lift-and-shift of both cluster nodes is not a safe production migration plan.
+- [SQL Server to Azure SQL Managed Instance migration overview](https://learn.microsoft.com/data-migration/sql-server/managed-instance/overview)
+- [Native restore from URL](https://learn.microsoft.com/azure/azure-sql/managed-instance/restore-sample-database-quickstart)
+- [Create Azure SQL Managed Instance](https://learn.microsoft.com/azure/azure-sql/managed-instance/instance-create-quickstart)
+- [SQL Managed Instance network requirements](https://learn.microsoft.com/azure/azure-sql/managed-instance/vnet-existing-add-subnet)

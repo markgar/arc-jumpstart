@@ -20,6 +20,8 @@ class SkillTests(unittest.TestCase):
             "infra/README.md",
             "scripts/README.md",
             "docs/03-arc-onboarding.md",
+            "docs/04-assessment.md",
+            "docs/05-migration.md",
         ):
             with self.subTest(path=path):
                 self.assertIn(path, text)
@@ -35,7 +37,7 @@ class SkillTests(unittest.TestCase):
             "./scripts/deploy.sh all",
             "./scripts/lab.sh build-status",
             "Never rerun `deploy.sh all`",
-            "Do not silently onboard Arc",
+            "agent must not connect Arc",
         ):
             with self.subTest(requirement=requirement):
                 self.assertIn(requirement, text)

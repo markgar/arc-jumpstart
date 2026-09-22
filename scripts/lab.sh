@@ -7,11 +7,14 @@ env_file="${ENV_FILE:-$repo_root/deploy.env}"
 source "$repo_root/scripts/runtime.sh"
 require_deployment_runtime
 
-if [[ "${1:-}" == stage-log || "${1:-}" == stage-progress || "${1:-}" == build-status ]]; then
+if [[ "${1:-}" == stage-log || "${1:-}" == stage-progress || "${1:-}" == build-status || "${1:-}" == inventory ]]; then
   if ! command -v python3 >/dev/null 2>&1; then
-    echo "python3 is required for safe stage-log display." >&2
+    echo "python3 is required for this command." >&2
     exit 1
   fi
+fi
+
+if [[ "${1:-}" == stage-log || "${1:-}" == stage-progress || "${1:-}" == build-status ]]; then
   viewer_args=(--env-file "$env_file")
   if [[ "${1:-}" == stage-progress || "${1:-}" == build-status ]]; then
     viewer_args+=(--progress)
@@ -68,21 +71,19 @@ case "${1:-}" in
   start)
     az vm start --resource-group "$resource_group" --name "$host_name" --output none
     ;;
-  retire-source)
-    nested_vm="${2:-}"
-    case "$nested_vm" in
-      JS-SQL-01|JS-UBUNTU-01) ;;
-      *)
-        echo "Usage: scripts/lab.sh retire-source <JS-SQL-01|JS-UBUNTU-01>" >&2
-        exit 1
-        ;;
-    esac
-    az vm run-command invoke \
-      --resource-group "$resource_group" \
-      --name "$host_name" \
-      --command-id RunPowerShellScript \
-      --scripts "\$vmName = '$nested_vm'; Stop-VM -Name \$vmName -Force -ErrorAction SilentlyContinue; Set-VM -Name \$vmName -AutomaticStartAction Nothing; \$retiredFile = 'C:\\ArcJumpstart\\RetiredVMs.txt'; if (-not ((Get-Content \$retiredFile -ErrorAction SilentlyContinue) -contains \$vmName)) { Add-Content -Path \$retiredFile -Value \$vmName }" \
-      --output none
+  inventory)
+    arc_resource_group="$(load_setting ARC_RESOURCE_GROUP)"
+    if [[ -z "$arc_resource_group" ]]; then
+      arc_resource_group="${resource_group}-arc"
+    fi
+    inventory_args=(
+      --subscription "$subscription_id"
+      --resource-group "$arc_resource_group"
+    )
+    if [[ -n "${2:-}" ]]; then
+      inventory_args+=(--output-dir "$2")
+    fi
+    exec python3 "$repo_root/scripts/export-arc-inventory.py" "${inventory_args[@]}"
     ;;
   delete-infra)
     if [[ "${2:-}" != "$resource_group" ]]; then
@@ -92,7 +93,7 @@ case "${1:-}" in
     az group delete --name "$resource_group" --yes
     ;;
   *)
-    echo "Usage: scripts/lab.sh <status|stop|start|build-status|stage-progress|stage-log|retire-source|delete-infra>" >&2
+    echo "Usage: scripts/lab.sh <status|stop|start|build-status|stage-progress|stage-log|inventory|delete-infra>" >&2
     exit 1
     ;;
 esac

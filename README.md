@@ -28,12 +28,12 @@ truth.
 
 ## What this builds
 
-The lab creates an Azure-hosted Windows Server 2022 Hyper-V environment for
-learning:
+The lab creates an Azure-hosted Windows Server 2022 Hyper-V environment that
+an agent prepares for:
 
-1. Azure Arc onboarding for Windows, Linux, and SQL Server.
-2. Azure Migrate Arc-based discovery and assessment.
-3. Optional Hyper-V replication, test migration, and cutover.
+1. User-authenticated Azure Arc onboarding.
+2. Azure Migrate assessment and Resource Graph inventory modeling.
+3. A simple migration of one database to Azure SQL Managed Instance.
 
 ```mermaid
 flowchart LR
@@ -47,10 +47,12 @@ flowchart LR
     AG1 <--> AG2
 ```
 
-Infrastructure preparation ends after the domain, three SQL Server 2025
-Enterprise Developer instances, sample databases, WSFC, availability group,
-and listener are ready. Arc onboarding, assessment, and migration remain
-learner-led exercises.
+The agent prepares the domain, three SQL Server 2025 Enterprise Developer
+instances, sample databases, WSFC, availability group, listener, Arc resource
+group, and desktop launchers. The user then opens the launcher and authenticates
+with their own Azure identity. The workshop starts after Arc inventory is ready:
+perform or reuse an assessment, export modeling data, and migrate
+`JumpstartStandaloneDB` to a small SQL managed instance.
 
 This is a disposable evaluation environment. The default outer host is
 `Standard_E16s_v7` in `westus2`, with a 1 TiB Premium SSD and optional Azure
@@ -119,9 +121,9 @@ recovery, rerun only the failed stage and required successors—never rerun
 ## Use the lab
 
 - [Deployment, access, and SSMS](docs/02-deploy.md)
-- [Arc and Arc-enabled SQL onboarding](docs/03-arc-onboarding.md)
+- [Complete user-authenticated Arc setup](docs/03-arc-onboarding.md)
 - [Azure Migrate assessment](docs/04-assessment.md)
-- [Optional migration exercise](docs/05-migration.md)
+- [Migrate one database to SQL Managed Instance](docs/05-migration.md)
 - [Troubleshooting, shutdown, and cleanup](docs/06-troubleshooting-cleanup.md)
 
 Agent and implementation references:

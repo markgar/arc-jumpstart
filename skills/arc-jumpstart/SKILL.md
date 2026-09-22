@@ -1,6 +1,6 @@
 ---
 name: arc-jumpstart
-description: Build, monitor, recover, and hand off the Azure Arc Jumpstart practice environment in this repository. Use when a user asks for help with this repo, wants to create or operate the lab, reports a failed stage, or needs guidance for Arc, assessment, or migration exercises.
+description: Build, monitor, recover, and hand off the Azure Arc Jumpstart environment in this repository. Use when a user wants to create or operate the lab, reports a failed stage, or needs guidance for Arc setup, assessment, inventory modeling, or a simple SQL Managed Instance migration.
 license: MIT
 ---
 
@@ -15,7 +15,7 @@ PowerShell implementation.
 1. Read `AGENTS.md`, `docs/00-agent-bootstrap.md`, `infra/README.md`, and
    `scripts/README.md`.
 2. Determine whether the request is for a new deployment, recovery of an
-   existing lab, lifecycle management, or a learner exercise.
+   existing lab, lifecycle management, Arc handoff, or workshop activity.
 3. On Windows, verify that operational commands will run inside WSL2 with
    Linux Azure CLI and Python. Native Windows and Git Bash are source-validation
    environments only.
@@ -59,15 +59,26 @@ ENV_FILE=/absolute/private/path/lab.env ./scripts/lab.sh build-status
 - Preserve working guests, disks, databases, identities, and active operations
   unless the user explicitly approves a scoped rebuild or deletion.
 
-## Learner boundary
+## User handoff and workshop boundary
 
-Infrastructure preparation stops after stage `60`. Do not silently onboard Arc,
-enable assessment collectors, or start migration. For a separately requested
-Arc onboarding exercise, follow `docs/03-arc-onboarding.md`, including the
-connectivity check and authentication rules in `AGENTS.md`.
+Infrastructure automation stops after stage `60` and Arc launcher staging. The
+agent must not connect Arc: the user opens the launcher and completes
+device-code authentication with their own Azure identity. Service-principal and
+unattended Arc onboarding are out of scope.
+
+After Arc and Arc-enabled SQL inventory are healthy, guide the assessment,
+Resource Graph export, modeling, and single-database SQL Managed Instance
+migration only when requested. Do not start assessment collectors, provision a
+managed instance, migrate data, or delete resources without the required user
+decision and cost/destructive-action approval.
+
+Use `docs/03-arc-onboarding.md` for the user-authenticated handoff,
+`docs/04-assessment.md` for assessment and inventory modeling, and
+`docs/05-migration.md` for the single-database migration.
 
 ## Completion
 
 Verify the ready-environment contract in `docs/00-agent-bootstrap.md`. Report
 non-secret resource identifiers, readiness evidence, skipped validation, and
-any unproven outcomes. Point the learner to the relevant exercise guide.
+any unproven outcomes. Point the user to Arc setup, assessment/modeling, or the
+single-database migration guide as appropriate.

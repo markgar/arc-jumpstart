@@ -1,21 +1,38 @@
-# Assess the Arc-enabled environment with Azure Migrate
+# Assess and export the Arc-enabled environment
 
-This lab uses Azure Migrate's Arc-based discovery preview. It does not deploy an Azure Migrate appliance. The nested guests qualify because they are Hyper-V VMs and are already represented by Arc-enabled server resources.
+This is the first workshop activity. Start only after the user has completed
+[interactive Arc setup](03-arc-onboarding.md) and the machines, SQL instances,
+databases, and availability group are visible in Azure. The lab uses Azure
+Migrate's Arc-based discovery preview and does not deploy an Azure Migrate
+appliance.
 
-## Create an Arc-based Azure Migrate project
+## Reuse or create an assessment
+
+First check each Arc-enabled SQL instance's **Migration assessment** page and
+the intended Azure Migrate project:
+
+1. If a successful assessment and synchronized project already cover the
+   current machines and databases, record their timestamps and reuse them.
+2. If the assessment is missing, failed, or predates material lab changes,
+   select **Run assessment** and wait for a successful completion timestamp.
+3. Do not start a second assessment while the first is still running.
+
+If no Arc-based Azure Migrate project exists:
 
 1. Open **Azure Arc > Migration > Savings and Readiness (Preview)**.
 2. Select **Create a migration project**.
-3. Select the subscription or subscriptions that contain the Arc resources.
-4. Choose the project resource group, project region, and the Azure migration **Target region**.
-5. Create the project and allow up to one hour for initial provisioning and discovery.
+3. Select the subscription containing the Arc resources.
+4. Choose the project resource group, project region, and Azure migration
+   **Target region**.
+5. Create the project and allow up to one hour for initial provisioning and
+   discovery.
 6. Complete the initial manual synchronization.
 
-Arc-based discovery currently works only with new projects. The initial sync takes a snapshot of CPU, memory, disk, network, operating system, hypervisor, and Arc-enabled SQL metadata.
+The operator needs **Azure Migrate Owner** or **Owner** on the project resource
+group and **Migrate Arc Discovery Reader - Preview** on the in-scope
+subscription. Arc-based discovery currently works only with new projects.
 
-The operator creating the project needs **Azure Migrate Owner** or **Owner** on the project resource group and **Migrate Arc Discovery Reader - Preview** on each in-scope subscription. For automatic synchronization, grant that preview reader role to the Azure Migrate project's managed identity too.
-
-## Confirm discovery
+## Confirm the assessment
 
 Verify that the project contains:
 
@@ -30,6 +47,10 @@ Azure Migrate automatically creates default assessments and business cases. Revi
 - Minimize migration time.
 
 Compare how the standalone SQL server and the AOAG nodes affect readiness, target recommendations, and cost.
+
+Record the assessment timestamp and confirm that `JumpstartStandaloneDB` has an
+Azure SQL Managed Instance recommendation before using it for the migration
+activity. Do not treat an old or incomplete assessment as modeling evidence.
 
 ## Enable performance-based sizing
 
@@ -57,7 +78,38 @@ For automatic Arc inventory sync:
 
 Use manual sync while learning the workflow, then enable automatic sync and verify that a tag or newly onboarded machine appears after synchronization.
 
-## Record the assessment
+## Export Resource Graph modeling input
+
+The versioned query at
+[`queries/arc-sql-modeling-inventory.kql`](../queries/arc-sql-modeling-inventory.kql)
+returns Arc machines, Arc-enabled SQL instances, databases, availability groups,
+SQL extensions, and licensing resources. Its join keys preserve these
+relationships:
+
+- Arc machine to SQL instance.
+- SQL instance to database and availability group.
+- Arc machine to SQL extension.
+
+Run the supported export after the assessment and Arc inventory are current:
+
+```bash
+ENV_FILE=/absolute/private/path/lab.env ./scripts/lab.sh inventory
+```
+
+The command limits the query to the configured subscription and Arc resource
+group, then writes a timestamped directory under `out/arc-modeling/` containing:
+
+- `inventory.raw.json`: the complete Azure Resource Graph response.
+- `inventory.csv`: one modeling row per resource, including raw `Properties`.
+
+The export does not invent missing values or flatten undocumented property
+shapes. Use `RecordType`, `JoinKey`, and `ParentJoinKey` to correlate records,
+then inspect the current properties for server sizing, SQL configuration,
+database details, assessment findings, and AG replica role. Count workload
+capacity from the active/primary replica; retain passive/secondary resources in
+the model without counting the same protected workload twice.
+
+## Record the modeling decision
 
 Capture:
 
@@ -66,5 +118,8 @@ Capture:
 - SQL IaaS versus SQL PaaS recommendations.
 - Dependencies or application context that Arc-based discovery cannot currently provide.
 - Your proposed migration waves and the reason for their order.
+- The Resource Graph export directory and the query revision used.
+- Which AG replica was treated as active and how passive capacity was modeled.
+- Why `JumpstartStandaloneDB` is the low-complexity migration candidate.
 
 Arc-based discovery currently does not provide software inventory, dependency analysis, web-app discovery, or PostgreSQL/MySQL discovery. Treat those as explicit assessment gaps rather than assuming the data is complete.

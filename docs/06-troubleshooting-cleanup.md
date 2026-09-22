@@ -217,13 +217,15 @@ The nested VMs are configured to start automatically with the host.
 
 Cleanup spans multiple resource groups. Perform it in this order:
 
-1. In Azure Migrate, clean up every test migration.
-2. Complete successful migrations or stop replication for every remaining protected guest.
-3. Remove the Hyper-V host/site from the migration project and uninstall both the Hyper-V replication provider and Recovery Services agent from the outer host.
-4. Delete the Azure Migrate project and its associated migration resources, cache storage, policies, and Recovery Services resources.
-5. Delete disposable test/migrated Azure VMs and confirm their NICs and managed disks are also removed.
-6. Disconnect or delete remaining Arc-enabled server and Arc-enabled SQL resources.
-7. Delete the dedicated Arc resource group, Migrate project/resource groups, migration-target resource group, and finally the infrastructure resource group below.
+1. Delete or revoke temporary database-migration SAS credentials.
+2. Delete the migration backup blob and temporary storage account when they are
+   no longer required.
+3. Delete the SQL managed instance and wait for deletion to complete.
+4. Delete the Azure Migrate project and assessment resources when they are no
+   longer required.
+5. Disconnect or delete remaining Arc-enabled server and Arc-enabled SQL resources.
+6. Delete the dedicated Arc, Migrate, SQL Managed Instance, and finally
+   infrastructure resource groups.
 
 ```bash
 ./scripts/lab.sh delete-infra <resource-group-name-from-deploy.env>
@@ -231,4 +233,9 @@ Cleanup spans multiple resource groups. Perform it in this order:
 
 Resource-group deletion is intentionally not included in the deployment wrapper.
 
-Finish by using Azure Resource Graph and Cost Management to search for the project prefix, Arc machine names, Azure Migrate project name, public IPs, managed disks, image-source storage accounts, and Recovery Services resources. Provider registration is subscription-wide and does not incur a resource charge; unregister providers only if that is part of your subscription governance.
+Finish by using Azure Resource Graph and Cost Management to search for the
+project prefix, Arc machine names, Azure Migrate project, SQL managed instance,
+temporary migration storage, public IPs, managed disks, and image-source storage
+accounts. Provider registration is subscription-wide and does not incur a
+resource charge; unregister providers only if that is part of your subscription
+governance.

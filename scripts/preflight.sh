@@ -78,6 +78,7 @@ required_providers=(
   Microsoft.DevTestLab
 )
 
+failed=false
 if [[ "$profile" == "full" ]]; then
   required_providers+=(
     Microsoft.HybridCompute
@@ -86,14 +87,16 @@ if [[ "$profile" == "full" ]]; then
     Microsoft.AzureArcData
     Microsoft.OffAzure
     Microsoft.Migrate
-    Microsoft.RecoveryServices
-    Microsoft.DataReplication
+    Microsoft.Sql
     Microsoft.KeyVault
     Microsoft.Insights
   )
+  if ! az extension show --name resource-graph --output none >/dev/null 2>&1; then
+    echo "Azure CLI extension missing: resource-graph (install with: az extension add --name resource-graph)" >&2
+    failed=true
+  fi
 fi
 
-failed=false
 for provider in "${required_providers[@]}"; do
   state="$(az provider show --namespace "$provider" --query registrationState --output tsv 2>/dev/null || true)"
   if [[ "$state" == "Registering" ]]; then
@@ -164,7 +167,7 @@ PY
 
 echo
 echo "Cost gate: this lab can run a $HOST_VM_SIZE VM, a 1-TiB Premium SSD,"
-echo "Azure Bastion, migration replication storage/network, and test/migrated VMs."
+echo "Azure Bastion, assessment collectors, and a temporary SQL Managed Instance."
 echo "Review current prices and quota in $AZURE_LOCATION before deploying."
 
 if [[ "$failed" == true ]]; then

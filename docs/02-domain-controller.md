@@ -301,8 +301,8 @@ services, backup/recovery planning and trusted certificates.
 Stage `50` creates the SQL service account but does not switch the AG engines
 to it; that occurs in stage `60`. No Azure Arc agent, Azure extension for SQL
 Server, assessment or migration is installed or started here. Continue to
-stage `60` only after verifying domain readiness, then follow the separate
-[learner-operated Arc onboarding guide](03-arc-onboarding.md).
+stage `60` only after verifying domain readiness, then use the separate
+[user-authenticated Arc setup guide](03-arc-onboarding.md).
 
 ## Microsoft references
 

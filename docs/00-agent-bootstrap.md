@@ -35,6 +35,15 @@ that service-principal-based unattended authentication has been implemented.
 Missing credentials, permissions, quota or approval are real prerequisites,
 not reasons to bypass safeguards.
 
+Before collecting deployment inputs on Windows, establish the execution
+runtime. `uname -s` must report Linux from WSL2, not `MINGW`, `MSYS` or
+`CYGWIN`. Confirm with the operator that WSL2 and its required Windows features
+are approved. Azure CLI, Python and the repository must be installed inside
+that WSL distribution; do not silently combine Git Bash or Windows-native
+executables with Linux paths. If WSL2 is unavailable, stop after source
+validation and direct the operator to an approved Linux/macOS workstation or
+Linux development VM. See [Windows prerequisites](01-prerequisites.md#windows-required-wsl2-setup).
+
 Once those inputs are approved, use documented defaults and proceed without
 repeated routine confirmation questions. See the
 [first clean-room attempt](02-clean-room-lessons.md) for observed region/quota,

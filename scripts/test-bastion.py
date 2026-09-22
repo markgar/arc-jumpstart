@@ -1,7 +1,9 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -67,6 +69,7 @@ else:
 """
 
 
+@unittest.skipIf(os.name == "nt", "Deployment wrappers require macOS, Linux, or WSL2.")
 class BastionWrapperTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix=".bastion-test-", dir=ROOT)
@@ -74,14 +77,21 @@ class BastionWrapperTests(unittest.TestCase):
         self.path = Path(self.directory.name)
         self.config = self.path / "mock.env"
         self.log = self.path / "az.jsonl"
-        executable = self.path / "az"
-        executable.write_text(FAKE_AZ)
-        executable.chmod(0o700)
+        fake_az = self.path / "fake-az.py"
+        fake_az.write_text(FAKE_AZ)
+        if os.name == "nt":
+            executable = self.path / "az.cmd"
+            executable.write_text(f'@echo off\r\n"{sys.executable}" "%~dp0fake-az.py" %*\r\n')
+        else:
+            executable = self.path / "az"
+            executable.write_text(f"#!{sys.executable}\n" + FAKE_AZ)
+            executable.chmod(0o700)
         self.environment = {
             **os.environ,
             "PATH": str(self.path) + os.pathsep + os.environ["PATH"],
             "ENV_FILE": str(self.config),
             "FAKE_AZ_LOG": str(self.log),
+            "AZURE_CLI_PATH": str(executable),
         }
         self.environment.pop("DEPLOY_BASTION", None)
         self.write_config()
@@ -279,8 +289,13 @@ class BastionWrapperTests(unittest.TestCase):
 
 class BastionTemplateTests(unittest.TestCase):
     def compile_template(self, stage):
+        candidates = ("az.cmd", "az.exe", "az") if os.name == "nt" else ("az", "az.cmd", "az.exe")
+        executable = next((shutil.which(candidate) for candidate in candidates
+                           if shutil.which(candidate)), None)
+        self.assertIsNotNone(executable, "Azure CLI is required for Bicep tests.")
         result = subprocess.run(
-            ["az", "bicep", "build", "--file", str(ROOT / "infra/stages" / stage / "main.bicep"), "--stdout"],
+            [executable, "bicep", "build", "--file",
+             str(ROOT / "infra/stages" / stage / "main.bicep"), "--stdout"],
             check=True, capture_output=True, text=True, timeout=60,
         )
         return json.loads(result.stdout)

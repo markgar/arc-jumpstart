@@ -109,13 +109,120 @@ Stage `45` installs SQL Server 2025 Enterprise Developer on clean Windows guests
 
 ## Workstation
 
-The wrapper supports Bash on macOS, Linux, or WSL and requires:
+The full workflow requires a consistent Linux-style execution environment:
 
-- `az`
-- `python3`
-- normal POSIX command-line tools
+- macOS
+- Linux
+- WSL2 on Windows
 
-No repository dependencies are installed globally.
+The deployment, preflight and lab-management wrappers are Bash programs that
+use POSIX process, path, permission and signal semantics. Native Windows,
+Git Bash, MSYS2 and Cygwin are not supported deployment runtimes. The wrappers
+reject those environments before reading configuration or changing Azure.
+Do not mix Windows Azure CLI or Windows Python with Bash running in WSL.
+
+Install these tools in the same supported environment:
+
+- Azure CLI (`az`) and its Bicep component
+- Python 3 (`python3`)
+- Git and normal POSIX command-line tools
+- ShellCheck for complete Bash validation
+- PowerShell 7 (`pwsh`) for the optional PowerShell parser and regression tests
+
+No repository package install is required. Verify the effective tools, not
+similarly named Windows executables inherited onto `PATH`:
+
+```bash
+uname -s
+command -v az python3 git
+az version
+az bicep version
+python3 --version
+git --version
+command -v shellcheck || echo "ShellCheck validation will be skipped."
+command -v pwsh || echo "PowerShell validation will be skipped."
+```
+
+### Windows: required WSL2 setup
+
+For Windows 10, Microsoft requires version 2004/build 19041 or later for the
+current one-command WSL installation; Windows 11 is also supported. The
+workstation must permit hardware virtualization and the Windows optional
+features used by WSL2. On a managed work laptop, obtain organizational approval
+before enabling those features.
+
+From an **Administrator PowerShell** window:
+
+```powershell
+wsl --install
+```
+
+This enables WSL and Virtual Machine Platform, installs Ubuntu by default and
+may report that a restart is required. Restart Windows before continuing. Then
+open Ubuntu once, create its Linux user, and confirm from PowerShell that the
+distribution is using WSL version 2:
+
+```powershell
+wsl --list --verbose
+```
+
+If WSL is already installed but Ubuntu is not, use `wsl --list --online` and
+`wsl --install -d Ubuntu`. Follow Microsoft's
+[WSL installation guide](https://learn.microsoft.com/windows/wsl/install) for
+older Windows builds, Store restrictions or installation errors.
+
+Inside Ubuntu, install the Linux tools. Use your organization's approved
+package sources and Microsoft's current
+[Azure CLI Linux instructions](https://learn.microsoft.com/cli/azure/install-azure-cli-linux)
+and
+[PowerShell on Ubuntu instructions](https://learn.microsoft.com/powershell/scripting/install/install-ubuntu):
+
+```bash
+sudo apt update
+sudo apt install -y ca-certificates curl git python3 shellcheck
+# Install Linux Azure CLI. Install Linux PowerShell 7 for complete validation.
+az version
+az bicep install
+```
+
+Clone the repository into the WSL filesystem, such as
+`~/src/arc-jumpstart`, rather than `/mnt/c/...`. Microsoft recommends storing
+project files on the same operating system as the tools that operate on them;
+this also preserves Linux permissions and avoids cross-filesystem path and
+performance problems.
+
+Keep the environment file in the WSL home directory, not in the Windows
+checkout or repository:
+
+```bash
+mkdir -p "$HOME/.config/arc-jumpstart"
+install -m 600 deploy.env.example "$HOME/.config/arc-jumpstart/lab.env"
+export ENV_FILE="$HOME/.config/arc-jumpstart/lab.env"
+```
+
+Edit the file inside WSL and retain mode `600`. A Windows `chmod` result on
+NTFS is not an equivalent owner-only ACL guarantee.
+
+### Windows without WSL2
+
+Without WSL2, this repository does not support provisioning or operating the
+lab from that workstation. Do not run `preflight.sh`, `deploy.sh` or `lab.sh`
+from Git Bash and do not translate the commands ad hoc into PowerShell.
+
+For source-only contribution checks, Git Bash with native Windows Azure CLI and
+Python 3 may run:
+
+```bash
+./scripts/validate.sh
+```
+
+That mode compiles Bicep and runs the platform-applicable Bash/Python tests,
+plus ShellCheck and PowerShell checks when those commands are available.
+Deployment-wrapper integration tests are skipped because that runtime is
+intentionally unsupported. This does not prove the deployment runtime. If
+organizational policy prevents WSL2, use an approved Linux/macOS workstation
+or Linux development VM for preflight, deployment and lab management. Keep the
+environment file on that execution host with owner-only permissions.
 
 After configuring `deploy.env`, run:
 

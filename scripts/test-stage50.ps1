@@ -5,7 +5,7 @@ $path = Join-Path $PSScriptRoot '../artifacts/scripts/50-configure-domain.ps1'
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors.Message -join "`n") }
 foreach ($name in @('Initialize-LabDcServices', 'Initialize-LabAdDnsZones', 'Register-LabDcDns', 'Wait-LabMemberAddress', 'Confirm-LabMemberDomainDiscovery',
-    'Test-GuestAuthenticationFailure', 'Resolve-LabDcCredential', 'Invoke-GuestWithRetry')) {
+    'Wait-LabTcpPort', 'Test-GuestAuthenticationFailure', 'Resolve-LabDcCredential', 'Invoke-GuestWithRetry')) {
     $definition = $ast.Find({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
@@ -176,6 +176,10 @@ if ($source.IndexOf('Initialize-LabDcServices -Address') -gt $source.IndexOf('In
     $source.IndexOf('Start-Service ADWS') -gt $source.IndexOf('Get-ADDomain -Server localhost') -or
     $source.IndexOf('Initialize-LabAdDnsZones -DnsDomain') -gt $source.IndexOf('Get-ADDomain -Identity $ExpectedDomain')) {
     throw 'DNS/service bootstrap must precede promotion and discovery-based AD queries.'
+}
+if ($source -notmatch "New-NetFirewallRule[\s\S]+-LocalPort 1433[\s\S]+-RemoteAddress [`$]NestedSubnetCidr" -or
+    $source -notmatch 'Wait-LabTcpPort -Address [`$]memberAddresses\[[`$]memberName\] -Port 1433') {
+    throw 'Every SQL member must allow TCP 1433 only from the nested subnet and prove host reachability.'
 }
 
 $password = ConvertTo-SecureString 'test-only-password' -AsPlainText -Force

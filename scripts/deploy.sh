@@ -7,6 +7,9 @@ temporary_files=()
 images_submitted=false
 image_previous_run_start_time=''
 
+source "$repo_root/scripts/runtime.sh"
+require_deployment_runtime
+
 cleanup() {
   if (( ${#temporary_files[@]} > 0 )); then
     rm -f "${temporary_files[@]}"
@@ -22,8 +25,8 @@ if [[ ! -f "$env_file" ]]; then
   exit 1
 fi
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 is required." >&2
+if ! command -v az >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+  echo "Azure CLI and python3 are required." >&2
   exit 1
 fi
 

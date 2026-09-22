@@ -4,6 +4,9 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 env_file="${ENV_FILE:-$repo_root/deploy.env}"
 
+source "$repo_root/scripts/runtime.sh"
+require_deployment_runtime
+
 if [[ "${1:-}" == stage-log || "${1:-}" == stage-progress || "${1:-}" == build-status ]]; then
   if ! command -v python3 >/dev/null 2>&1; then
     echo "python3 is required for safe stage-log display." >&2

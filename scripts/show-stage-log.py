@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -150,11 +151,23 @@ Get-Content -LiteralPath $log.FullName -ErrorAction Stop |
 """
 
 
+def azure_cli_path():
+    override = os.environ.get("AZURE_CLI_PATH")
+    if override:
+        return override
+    candidates = ("az.cmd", "az.exe", "az") if os.name == "nt" else ("az", "az.cmd", "az.exe")
+    for candidate in candidates:
+        path = shutil.which(candidate)
+        if path:
+            return path
+    raise FileNotFoundError("Azure CLI was not found on PATH.")
+
+
 def run_az(arguments, redactor):
     # Raw output stays in memory, never in a temporary transcript/download file.
     try:
         result = subprocess.run(
-            ["az", *arguments], stdin=subprocess.DEVNULL,
+            [azure_cli_path(), *arguments], stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
     except OSError as error:
@@ -196,7 +209,7 @@ def print_progress(stage, progress, redactor):
 def run_json_az(arguments, redactor):
     try:
         result = subprocess.run(
-            ["az", *arguments], stdin=subprocess.DEVNULL,
+            [azure_cli_path(), *arguments], stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
     except OSError as error:

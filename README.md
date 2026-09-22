@@ -94,6 +94,13 @@ the conversation remains available for questions and one-shot status checks.
 
 ### Run it yourself
 
+On Windows, perform the complete workflow inside WSL2. Native Windows and Git
+Bash are not supported for preflight, deployment or lab management; Git Bash
+may run `./scripts/validate.sh` for source-only checks. Install Linux Azure CLI
+and Python inside WSL2, clone into the WSL filesystem, and keep the private
+environment file there. See the
+[Windows prerequisites and no-WSL options](docs/01-prerequisites.md#windows-required-wsl2-setup).
+
 Keep credentials outside the repository. On macOS, one convenient location is
 shown below; any approved owner-only absolute path works:
 
@@ -110,6 +117,21 @@ az login
 ENV_FILE="$ENV_FILE" ./scripts/preflight.sh infra &&
 ENV_FILE="$ENV_FILE" ./scripts/deploy.sh all
 ```
+
+The file is named `deploy.env.example` only in the repository. Your working
+copy may have any name; `ENV_FILE` is the exact path used by every command.
+Passwords are not printed after creation. Retrieve them only from that private
+file:
+
+| Purpose | Setting |
+|---|---|
+| Azure host/Bastion sign-in | `HOST_ADMIN_USERNAME` and `HOST_ADMIN_PASSWORD` |
+| Nested Windows local Administrator and `JUMPSTART\Administrator` | `NESTED_WINDOWS_PASSWORD` |
+| Directory Services Restore Mode only | `SAFE_MODE_PASSWORD` |
+| SQL service account | `SQL_SERVICE_ACCOUNT_PASSWORD` |
+
+If an agent created the file, record its `ENV_FILE` path before the session or
+worktree is removed. Do not recover passwords from deployment logs.
 
 Keep that terminal open. In another terminal, request a one-shot progress view
 without starting another operation:
@@ -131,6 +153,11 @@ to succeed, and domain/cluster readiness gates remain mandatory.
 Use `ENV_FILE=/absolute/private/path/lab.env ./scripts/lab.sh status`, `stop`,
 and `start` for lifecycle operations. Use the same private file for deployment,
 status, and recovery.
+
+After the build, connect to the host through Bastion and use Hyper-V Manager for
+guest consoles. For SSMS access from the host, use the fixed guest IP addresses
+and the documented domain credential launch procedure in
+[Connect to nested SQL from the host](docs/02-deploy.md#connect-to-nested-sql-from-the-host).
 
 During a long-running stage, `./scripts/lab.sh build-status` discovers all active
 canonical stages and reads their existing Managed Run Command state, elapsed

@@ -1,8 +1,15 @@
 # Script entry points
 
 Run these Bash/Python entry points from the repository root on macOS, Linux or
-WSL. They drive the Bicep stages and host-side Windows automation. Do not run
+WSL2. They drive the Bicep stages and host-side Windows automation. Do not run
 the Hyper-V/AD PowerShell artifacts directly on the workstation.
+
+On Windows, WSL2 is required for `preflight.sh`, `deploy.sh` and `lab.sh`.
+Git Bash/MSYS2/Cygwin are source-validation environments only; the operational
+wrappers reject them before accessing Azure. Install Azure CLI and Python
+inside WSL2 and keep the repository and private environment file in the WSL
+filesystem. Do not combine Windows-native tools with WSL commands. See the
+[Windows prerequisite procedure](../docs/01-prerequisites.md#windows-required-wsl2-setup).
 
 See the [agent bootstrap runbook](../docs/00-agent-bootstrap.md) for the mission,
 inputs and required ready-environment outcome.
@@ -11,7 +18,7 @@ inputs and required ready-environment outcome.
 
 | Command | Purpose and boundary |
 |---|---|
-| `./scripts/validate.sh` | Bicep compilation, Bash syntax, Python regression tests and available ShellCheck/PowerShell checks. Does not deploy Azure resources. Full coverage requires those optional tools to be present; report skipped checks honestly. |
+| `./scripts/validate.sh` | Bicep compilation, Bash syntax, Python regression tests and available ShellCheck/PowerShell checks. Does not deploy Azure resources. It may run from Git Bash on native Windows, but that validates source only; full coverage requires the optional tools to be present. |
 | `./scripts/preflight.sh infra` | Checks the configured Azure target, required infrastructure registrations, host SKU availability and download reachability; prints cost considerations. Does not provision the lab or automatically register providers. |
 | `./scripts/preflight.sh full` | Also checks registrations for the later Arc/assessment/migration exercises. Does not perform those exercises. |
 | `./scripts/deploy.sh all` | Runs the complete saved infrastructure sequence through stage `60`. Intended for a new lab, not blanket repair of an existing domain. |
@@ -148,8 +155,8 @@ and [cleanup guide](../docs/06-troubleshooting-cleanup.md).
 
 ## Regression coverage
 
-`validate.sh` invokes `test-check-sql-media.py`, `test-stage-log.py`,
-`test-bastion.py`, and, when
+`validate.sh` invokes `test-check-sql-media.py`, `test-runtime.py`,
+`test-stage-log.py`, `test-bastion.py`, and, when
 PowerShell is available, `test-stage40.ps1`, `test-stage45.ps1`,
 `test-stage50.ps1` and `test-stage60.ps1`.
 

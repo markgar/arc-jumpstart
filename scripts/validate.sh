@@ -4,8 +4,14 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+source "$repo_root/scripts/runtime.sh"
+
+if is_native_windows_posix_shell; then
+  echo "Windows source-validation mode: deployment and lab-management commands require WSL2."
+fi
+
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 is required by scripts/deploy.sh." >&2
+  echo "python3 is required by scripts/validate.sh." >&2
   exit 1
 fi
 
@@ -21,6 +27,7 @@ for script in scripts/*.sh; do
 done
 python3 scripts/test-check-sql-media.py
 python3 scripts/test-arc-launcher.py
+python3 scripts/test-runtime.py
 python3 scripts/test-stage-log.py
 python3 scripts/test-bastion.py
 

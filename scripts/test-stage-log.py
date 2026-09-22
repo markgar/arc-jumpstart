@@ -20,6 +20,22 @@ spec.loader.exec_module(viewer)
 
 
 class RedactionTests(unittest.TestCase):
+    def test_azure_cli_override_is_used_verbatim(self):
+        with patch.dict(viewer.os.environ, {"AZURE_CLI_PATH": "C:\\Tools\\az.cmd"}):
+            self.assertEqual(viewer.azure_cli_path(), "C:\\Tools\\az.cmd")
+
+    def test_windows_resolution_prefers_launchable_cli_suffixes(self):
+        resolved = {
+            "az.cmd": "C:\\Tools\\az.cmd",
+            "az.exe": None,
+            "az": "C:\\Tools\\az",
+        }
+        with patch.dict(viewer.os.environ, {}, clear=True), \
+                patch.object(viewer.os, "name", "nt"), \
+                patch.object(viewer.shutil, "which", side_effect=resolved.get) as which:
+            self.assertEqual(viewer.azure_cli_path(), "C:\\Tools\\az.cmd")
+        which.assert_called_once_with("az.cmd")
+
     def test_configured_values_and_representations(self):
         password = 'fake<&>"\'$pass\\word'
         signature = "fake+signature/value="
@@ -105,9 +121,8 @@ class ViewerIntegrationTests(unittest.TestCase):
             "IMAGE_SOURCE_SAS_TOKEN=?sv=2025-01-01&sig=fake-sas-signature\n"
         )
         self.calls = self.root / "calls.jsonl"
-        az = self.root / "az"
-        az.write_text(
-            "#!" + sys.executable + "\n"
+        fake_az = self.root / "fake-az.py"
+        fake_az.write_text(
             "import json, os, sys\n"
             "with open(os.environ['FAKE_CALLS'], 'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
             "account = sys.argv[1:3] == ['account', 'set']\n"
@@ -130,17 +145,41 @@ class ViewerIntegrationTests(unittest.TestCase):
             "    print('error: fake-host-password fake-environment-secret 0x80070005', file=sys.stderr)\n"
             "sys.exit(code)\n"
         )
-        az.chmod(0o700)
+        if os.name == "nt":
+            az = self.root / "az.cmd"
+            az.write_text(f'@echo off\r\n"{sys.executable}" "%~dp0fake-az.py" %*\r\n')
+        else:
+            az = self.root / "az"
+            az.write_text(
+                f"#!{sys.executable}\n"
+                "import runpy\n"
+                "from pathlib import Path\n"
+                "runpy.run_path(Path(__file__).with_name('fake-az.py'), run_name='__main__')\n"
+            )
+            az.chmod(0o700)
         # Do not inherit real credentials or configuration into the fake CLI.
         self.environment = {
             "PATH": str(self.root) + os.pathsep + os.path.dirname(sys.executable) + os.pathsep + "/usr/bin:/bin",
             "HOME": str(self.root), "ENV_FILE": str(self.env_file),
             "FAKE_CALLS": str(self.calls), "AZURE_CLIENT_SECRET": "fake-environment-secret",
+            "AZURE_CLI_PATH": str(az),
         }
 
     def run_viewer(self, stage="60", command="stage-log"):
+        if os.name == "nt":
+            arguments = [
+                sys.executable, str(ROOT / "scripts" / "show-stage-log.py"),
+                "--env-file", str(self.env_file),
+            ]
+            if command in ("stage-progress", "build-status"):
+                arguments.append("--progress")
+            if command == "build-status":
+                arguments.append("--auto")
+            arguments.extend(["--", stage])
+        else:
+            arguments = ["bash", str(ROOT / "scripts/lab.sh"), command, stage]
         return subprocess.run(
-            ["bash", str(ROOT / "scripts/lab.sh"), command, stage],
+            arguments,
             env=self.environment, capture_output=True, text=True, check=False,
         )
 
@@ -153,6 +192,7 @@ class ViewerIntegrationTests(unittest.TestCase):
         self.assertIn("0x80070005", result.stderr)
         self.assertIn("stored host transcripts remain sensitive and unchanged", result.stderr)
 
+    @unittest.skipIf(os.name == "nt", "Shell dispatch is covered in the supported POSIX runtime.")
     def test_real_shell_dispatch_uses_only_fake_cli_and_sanitizes_failure(self):
         self.environment["FAKE_LOG_EXIT"] = "23"
         result = self.run_viewer()

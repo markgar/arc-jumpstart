@@ -94,6 +94,13 @@ the conversation remains available for questions and one-shot status checks.
 
 ### Run it yourself
 
+On Windows, perform the complete workflow inside WSL2. Native Windows and Git
+Bash are not supported for preflight, deployment or lab management; Git Bash
+may run `./scripts/validate.sh` for source-only checks. Install Linux Azure CLI
+and Python inside WSL2, clone into the WSL filesystem, and keep the private
+environment file there. See the
+[Windows prerequisites and no-WSL options](docs/01-prerequisites.md#windows-required-wsl2-setup).
+
 Keep credentials outside the repository. On macOS, one convenient location is
 shown below; any approved owner-only absolute path works:
 

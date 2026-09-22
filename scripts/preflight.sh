@@ -5,6 +5,9 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 env_file="${ENV_FILE:-$repo_root/deploy.env}"
 profile="${1:-infra}"
 
+source "$repo_root/scripts/runtime.sh"
+require_deployment_runtime
+
 case "$profile" in
   infra|full) ;;
   *)

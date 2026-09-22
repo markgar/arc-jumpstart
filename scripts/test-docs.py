@@ -36,6 +36,10 @@ class DocumentationTests(unittest.TestCase):
             lines[2],
             '**Clone this repo and ask your agent: "Help me use this to make an Arc environment."**',
         )
+        opening = "\n".join(lines[:20])
+        self.assertIn("without further\nintervention", opening)
+        self.assertIn("stops before adding the servers to Azure Arc", opening)
+        self.assertIn("SQL Server extension should then deploy automatically", opening)
 
     def test_active_docs_use_current_defaults(self):
         readme = (ROOT / "README.md").read_text()

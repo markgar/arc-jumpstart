@@ -237,6 +237,57 @@ Expected nested VMs:
 | `JS-SQL-AG-02` | WSFC and AOAG replica |
 | `JS-UBUNTU-01` | Standalone Linux workload |
 
+### Connect to nested SQL from the host
+
+The Hyper-V host is intentionally not joined to `jumpstart.lab`, and it does
+not use the lab domain controller for DNS. In SSMS, connect by fixed IP rather
+than by guest name:
+
+| SQL guest | Server name in SSMS |
+|---|---|
+| `JS-SQL-01` | `192.168.128.11` |
+| `JS-SQL-AG-01` | `192.168.128.12` |
+| `JS-SQL-AG-02` | `192.168.128.13` |
+| AG listener | `192.168.128.21` |
+
+Stage `50` enables TCP `1433` on all three SQL guests only from
+`192.168.128.0/24` and verifies the port from the host. It grants
+`JUMPSTART\Domain Admins` SQL sysadmin. Because the host itself has no domain
+logon token, launch SSMS with network-only domain credentials:
+
+```powershell
+$ssms = Get-ChildItem "$env:ProgramFiles\Microsoft SQL Server Management Studio*" `
+  -Filter Ssms.exe -Recurse -ErrorAction Stop |
+  Select-Object -First 1 -ExpandProperty FullName
+runas.exe /netonly /user:JUMPSTART\Administrator "`"$ssms`""
+```
+
+Enter the value of `NESTED_WINDOWS_PASSWORD` when `runas` prompts. In SSMS,
+select **Windows Authentication**, enable **Trust server certificate** for
+these lab instances, and connect to one of the IP addresses above. Do not put
+the password on the command line.
+
+Files downloaded on the host are not automatically visible inside a nested
+guest. To restore an AdventureWorks backup, copy it through PowerShell Direct
+using the nested guest's local Administrator credential:
+
+```powershell
+$credential = Get-Credential 'JS-SQL-01\Administrator'
+$session = New-PSSession -VMName JS-SQL-01 -Credential $credential
+Invoke-Command -Session $session {
+  New-Item C:\ArcJumpstart\Backups -ItemType Directory -Force | Out-Null
+}
+Copy-Item C:\Path\To\AdventureWorks2025.bak `
+  -Destination C:\ArcJumpstart\Backups\AdventureWorks2025.bak `
+  -ToSession $session
+Remove-PSSession $session
+```
+
+Use `NESTED_WINDOWS_PASSWORD` for that local credential. Restore the guest path
+from SSMS. A lab deployed before this host-access rule was added can apply it
+by rerunning stage `50`, then stage `60` only if its AG configuration still
+needs recovery; do not rerun `all`.
+
 ## Stage 60 prerequisites and safety checks
 
 Read the [AG build sequence and lessons learned](02-sql-ag-lessons.md) for the

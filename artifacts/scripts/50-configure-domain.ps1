@@ -80,6 +80,39 @@ function Wait-VMHeartbeat {
     throw "Timed out waiting for heartbeat from $VMName."
 }
 
+function Wait-LabTcpPort {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Address,
+
+        [Parameter(Mandatory)]
+        [int]$Port,
+
+        [int]$TimeoutSeconds = 60
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        $client = [Net.Sockets.TcpClient]::new()
+        try {
+            $pending = $client.BeginConnect($Address, $Port, $null, $null)
+            if ($pending.AsyncWaitHandle.WaitOne(5000) -and $client.Connected) {
+                $client.EndConnect($pending)
+                return
+            }
+        }
+        catch {
+            $failure = $_.Exception.Message
+        }
+        finally {
+            $client.Dispose()
+        }
+        if ((Get-Date) -lt $deadline) { Start-Sleep -Seconds 5 }
+    } while ((Get-Date) -lt $deadline)
+
+    throw "TCP $Port on $Address was not reachable from the Hyper-V host within $TimeoutSeconds seconds. $failure"
+}
+
 function Test-GuestAuthenticationFailure {
     param([System.Management.Automation.ErrorRecord]$Failure)
     return $Failure.FullyQualifiedErrorId -match 'InvalidCredential|Authentication' -or
@@ -410,9 +443,9 @@ try {
         Invoke-GuestWithRetry `
             -VMName $memberName `
             -Credential $memberCredential `
-            -ArgumentList $DomainNetbiosName, $memberName `
+            -ArgumentList $DomainNetbiosName, $memberName, "$DhcpScopeId/24" `
             -ScriptBlock {
-                param($TargetNetbiosName, $ExpectedServerName)
+                param($TargetNetbiosName, $ExpectedServerName, $NestedSubnetCidr)
                 $sqlcmd = (Get-Command sqlcmd.exe -ErrorAction Stop).Source
                 $deadline = (Get-Date).AddMinutes(10)
                 $sqlReady = $false
@@ -430,6 +463,16 @@ try {
                 if (-not $sqlReady) {
                     throw 'SQL Server did not become ready within 10 minutes.'
                 }
+
+                Get-NetFirewallRule -DisplayName 'Arc Jumpstart SQL Server' -ErrorAction SilentlyContinue |
+                    Remove-NetFirewallRule
+                New-NetFirewallRule `
+                    -DisplayName 'Arc Jumpstart SQL Server' `
+                    -Direction Inbound `
+                    -Protocol TCP `
+                    -LocalPort 1433 `
+                    -RemoteAddress $NestedSubnetCidr `
+                    -Action Allow | Out-Null
 
                 $domainAdmins = "$TargetNetbiosName\Domain Admins"
                 $escapedDomainAdmins = $domainAdmins.Replace(']', ']]')
@@ -465,6 +508,7 @@ IF IS_SRVROLEMEMBER(N'sysadmin', N'$domainAdmins') <> 1
                     Restart-Service MSSQLSERVER -Force
                 }
             }
+        Wait-LabTcpPort -Address $memberAddresses[$memberName] -Port 1433
     }
 
     Invoke-GuestWithRetry -VMName $dcName -Credential $domainCredential -ScriptBlock {
@@ -472,7 +516,7 @@ IF IS_SRVROLEMEMBER(N'sysadmin', N'$domainAdmins') <> 1
             Select-Object Name, DNSHostName, Enabled |
             Format-Table -AutoSize
     }
-    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage50] Domain, DNS, member trust, and domain-admin SQL access checks completed."
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage50] Domain, DNS, member trust, domain-admin SQL access, and host-to-SQL TCP checks completed."
 }
 finally {
     Stop-Transcript

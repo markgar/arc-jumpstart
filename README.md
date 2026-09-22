@@ -2,9 +2,18 @@
 
 **Clone this repo and ask your agent: "Help me use this to make an Arc environment."**
 
-The agent should read [`AGENTS.md`](AGENTS.md), collect only the missing Azure,
-cost, and credential decisions, then build and verify the lab without making
-the learner perform infrastructure setup.
+After collecting the required Azure target, cost, and credential decisions,
+your agent should create and verify the complete environment without further
+intervention. It should run through the domain, SQL installations, cluster,
+availability group, sample databases, and Arc launcher staging.
+
+The agent stops before adding the servers to Azure Arc because that step
+requires you to authenticate with your own Azure identity. Open the staged
+launcher on each server and complete the device-code sign-in. The Arc-enabled
+SQL Server extension should then deploy automatically and inventory the SQL
+instances and databases. When the Arc machine and SQL resources are healthy,
+the environment is ready for the assessment, modeling, and migration workshop
+exercises.
 
 ## Optional guided skill
 

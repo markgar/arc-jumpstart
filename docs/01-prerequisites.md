@@ -64,9 +64,9 @@ assessment, replication, test migration or cutover work.
 ## Credentials
 
 Copy `deploy.env.example` to an owner-only file outside the repository and set
-`ENV_FILE` to its absolute path. On macOS,
-`$HOME/.config/arc-jumpstart/lab.env` is a convenient example, not a required
-destination. Use unique passwords for:
+`ENV_FILE` to its absolute path. On macOS, Linux, or WSL2,
+`$HOME/.config/arc-jumpstart/lab.env` is a convenient location. Use unique
+passwords for:
 
 - The outer Hyper-V host.
 - Directory Services Restore Mode.
@@ -224,14 +224,18 @@ organizational policy prevents WSL2, use an approved Linux/macOS workstation
 or Linux development VM for preflight, deployment and lab management. Keep the
 environment file on that execution host with owner-only permissions.
 
-After configuring `deploy.env`, run:
+After configuring the private `ENV_FILE`, run:
 
 ```bash
 ./scripts/validate.sh
 ENV_FILE=/absolute/private/path/lab.env ./scripts/preflight.sh infra
 ```
 
-The first command performs source validation. The second checks the authenticated subscription, provider registration, regional VM SKU restrictions, and source-image reachability. Regional quota is subscription-specific; confirm the available **Standard ESv5 Family vCPUs** in Azure Quotas before deploying.
+The first command performs source validation. The second checks the
+authenticated subscription, provider registration, regional VM SKU
+restrictions, and source-image reachability. Regional quota is
+subscription-specific; confirm the relevant VM-family and regional vCPU quota
+for `HOST_VM_SIZE` before deploying.
 
 Then start the complete infrastructure build:
 

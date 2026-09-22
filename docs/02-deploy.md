@@ -3,7 +3,7 @@
 ## Configure
 
 ```bash
-ENV_FILE="$HOME/.config/arc-jumpstart/lab.env" # macOS example; any approved absolute path works
+ENV_FILE="$HOME/.config/arc-jumpstart/lab.env"
 mkdir -p "$(dirname "$ENV_FILE")"
 if [[ ! -f "$ENV_FILE" ]]; then
   install -m 600 deploy.env.example "$ENV_FILE"
@@ -84,29 +84,13 @@ continues to stage `10`; nothing in stages `10`-`60` or final core readiness
 depends on Bastion. Even a rejected Bastion submission is reported separately
 and does not stop the core build. Set `DEPLOY_BASTION=false` to omit that request.
 
-Stage `40` prepares a local generalized Windows parent before cloning all four Windows guests. In each temporary template, it removes a removable, unprovisioned Administrator Edge AppX registration when a newer Edge version is provisioned, or when the registration is the known source-image version `120.0.2210.61`. Fresh source images can have that old registration without any provisioned Edge replacement; cleanup does not depend on waiting for an Edge update. It preserves all provisioned versions and other applications, and fails explicitly if an unprovisioned registration remains under another user or cannot be safely removed. This addresses Sysprep error `0x80073cf2` seen in the source images without requiring manual package cleanup.
-
-Sysprep runs through a SYSTEM task using `/generalize /oobe /quit`. The task records the result at `C:\Windows\System32\Sysprep\ArcJumpstart-Result.json` and requests shutdown, including on failure so the host can inspect the disk. Generalization can disconnect PowerShell Direct, so the host does not depend on a live guest session to determine success. After the VM reaches `Off`, the host mounts its disk read-only and checks the recorded process exit code, Windows image state, and `Sysprep_succeeded.tag` before writing the parent's `.ready` marker. A task result of zero or a VM reaching `Off` alone is not proof of generalization. Failures include the guest's Panther error-log tail in the stage transcript; paused or saved VMs fail immediately, and shutdown has a 30-minute timeout. Do not manually shut down, reboot, or resume templates while stage `40` is active.
-
-After a failure, preserve the transcript and guest diagnostics before retrying. Once the previous Azure Run Command has terminated and its cleanup is complete, an incomplete template without a `.ready` marker can be rebuilt from the unchanged downloaded source image only if no dependent lab disks exist. Manual repairs to that temporary template are not required or retained by the retry. Unique Windows SIDs are still checked after the final guests boot; SQL functionality must also be verified before continuing the SQL exercises.
-
-The generalized-parent readiness marker includes a configuration revision.
-Older timestamp-only markers do not prove that the answer file includes the
-product-key fix. Stage `40` rejects stale markers and conflicting child-disk
-parents rather than silently upgrading the cache or deleting existing guests.
-Never edit a marker to make an old parent appear current, or alter a parent
-backing differencing disks. For an existing lab, finish supported setup inside
-the affected guests, or deliberately rebuild in a fresh lab after preserving
-needed data. Stage `40` is a bootstrap stage, not an in-place repair tool for an
-already-promoted DC: its local-account and machine-SID checks assume workgroup
-guests.
-
-The updated path was also exercised independently with the default Windows
-Server 2022 Standard source: a new isolated parent passed offline Sysprep
-verification, and its new clone completed native OOBE and Azure KMS activation
-without keyboard input, renaming or a forced first-boot restart. This is
-separate evidence from repairing the original guests in place; it does not
-establish that arbitrary replacement images or other editions were live-tested.
+Stage `40` prepares and verifies a generalized Windows parent before cloning all
+four Windows guests. It validates Sysprep evidence offline, rejects stale parent
+markers or conflicting child disks, and checks OOBE, activation, and unique
+machine SIDs before continuing. Do not manually alter the parent, readiness
+markers, or guest setup state. See the
+[SQL AG lessons](02-sql-ag-lessons.md#prepare-windows-first-then-install-sql-on-each-clone)
+for implementation history and recovery boundaries.
 
 Stage `45` downloads SQL Server 2025 Enterprise Developer media once to the host's persistent disk and installs the default database-engine instance on each of the three SQL guests. It uses the ODBC driver and `sqlcmd` tooling supplied by SQL Setup rather than installing an older command-line utility separately. Installation uses Windows authentication and grants the guest's local Administrator SQL sysadmin access; no SQL authentication password is configured. Stage `50` later grants the lab domain administrators SQL access, and stage `60` configures the domain service account and availability group through SQL Server's native WMI provider.
 
@@ -186,7 +170,10 @@ python3 scripts/check-sql-media.py \
   --sha256 f78f869d44e8c2cbf93be16ce6ea52dd811636f046ded29e7a74dd1352134851
 ```
 
-The command downloads the entire file, rejects incomplete or non-ISO content, and verifies the checksum before publishing the output file. It does not prove Windows setup, SQL edition, or login readiness; stage `45` checks those on the guests. A full local download was verified in about 19 seconds during live development, but this is not a network performance guarantee.
+The command downloads the entire file, rejects incomplete or non-ISO content,
+and verifies the checksum before publishing the output file. It does not prove
+Windows setup, SQL edition, or login readiness; stage `45` checks those on the
+guests.
 
 Do not start the next numbered stage until its required predecessor reports success. Bastion is not a predecessor. If a host-script stage fails, run `./scripts/lab.sh stage-log <stage>`, correct the cause in the repository, and rerun only that number.
 
@@ -210,13 +197,6 @@ This explicitly requests Bastion regardless of `DEPLOY_BASTION`, and returns
 after Azure accepts the request, not after provisioning finishes. Do not
 resubmit while its earlier deployment is active. Failed access must be
 investigated separately; it is not a reason to rebuild healthy infrastructure.
-
-Older builds deployed Bastion inside stage `00`. Already-running deployments
-retain their submitted template; updating this repo does not remove their old
-wait. Do not start a second competing `all` invocation. New submissions use
-`arc-jumpstart-bastion`, not the old nested deployment. Older labs created
-with Bastion disabled may need a scoped stage `00` network update to reserve
-the access subnet before adding Bastion; do not rerun `all` for this.
 
 ## Connect to the host
 
@@ -291,88 +271,22 @@ needs recovery; do not rerun `all`.
 ## Stage 60 prerequisites and safety checks
 
 Read the [AG build sequence and lessons learned](02-sql-ag-lessons.md) for the
-root causes encountered during development, their permanent fixes, one-time
-recovery actions and the exact scope of the successful deployment.
+implementation details, permanent fixes, recovery boundaries, and evidence.
 
 Complete the [domain-readiness checks](02-domain-controller.md#verify-the-domain-and-members)
 before running `./scripts/deploy.sh 60`. This stage requires working domain-admin
 credentials and HTTPS access from the host to `cdn.powershellgallery.com`.
 
-Stage `60` first checks the native `OOBEComplete` state on both AG guests.
-An unfinished setup or a failed state query stops immediately, before downloads
-or cluster configuration. This guard does not finish OOBE or modify setup flags;
-resolve the Windows first-boot issue before retrying.
+Stage `60` verifies completed Windows setup, SQL and update readiness, native
+cluster validation, completion evidence for local cluster operations, quorum,
+AG health, synchronized databases, and listener DNS/TCP/SQL access. It rejects
+active operations, stale evidence, conflicting AG state, unknown validation
+warnings, and incomplete database synchronization. Do not bypass these gates
+or delete retained operation evidence to force a retry.
 
-Cluster operations run in a local Windows PowerShell child process on an AG
-guest, launched with the domain credential from a held PowerShell Direct session.
-The caller waits for the process and checks fresh completion/exit evidence;
-starting a process is not completion. This supplies a local execution context
-and credentials for cross-machine operations without enabling CredSSP. See
-[New-Cluster's remoting restriction](https://learn.microsoft.com/en-us/powershell/module/failoverclusters/new-cluster?view=windowsserver2022-ps)
-and [Start-Process lifetime and wait behavior](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/start-process?view=powershell-5.1#notes).
-Operations retain scripts, stdout/stderr, result and exit evidence under
-`C:\ArcJumpstart\Operations\<operation>\<attempt>\`;
-`C:\ArcJumpstart\Operations\active.json` records prior work on the guest.
-The operation budgets are evaluated after the synchronous
-process finishes, not enforced by killing an in-progress cluster operation.
-Inspect retained evidence before retrying; do not delete active markers to
-bypass an unresolved operation.
-
-A consistent terminal failure can be retried after its process is inactive and
-locks are released; the old attempt's diagnostics remain available. Active,
-unknown or inconsistent completion evidence blocks a new attempt.
-
-The stage downloads Microsoft `SqlServer` PowerShell module **22.4.5.1** once
-(47,388,419 bytes), verifies its pinned size/SHA512 against the
-[published package metadata](https://www.powershellgallery.com/api/v2/Packages(Id='SqlServer',Version='22.4.5.1')),
-and copies it into the guests. The host cache is
-`F:\ArcJumpstart\SqlServerModule\sqlserver.22.4.5.1.nupkg`; guest extraction is
-`C:\ArcJumpstart\Modules\SqlServer\22.4.5.1`. This dependency supplies the documented
-`Enable-SqlAlwaysOn` command. SQL service-account changes use native SQL WMI;
-Always On enablement does not directly write the HADR registry flag. Instances
-are enabled and checked one at a time, including restart/readiness handling.
-
-The SQL readiness probe explicitly converts both `SERVERPROPERTY` results to
-integers and requires `IsHadrEnabled=1` and `HadrManagerStatus=1`. Deterministic
-SQL errors, such as a type-conversion failure, stop immediately instead of being
-repeated until a startup timeout. Valid not-ready states and recognized startup
-connection failures use a bounded wait; a running Windows service alone is not
-sufficient.
-
-Before validation, both AG guests verify their installed-update inventory with
-an offline Windows Update Agent search. Only error `0x80248014` triggers one
-online metadata search for already installed updates, followed by a required
-successful offline recheck. This initializes missing inventory metadata without
-invoking an update downloader or installer, changing update policies or sources,
-or deleting the data store. Guests therefore need access to their configured
-update source when this initialization is required; an already healthy offline
-inventory requires no online search. Other errors and partially successful
-results stop the stage. See Microsoft's [update-search API](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nf-wuapi-iupdatesearcher-search).
-
-Before creating WSFC, stage `60` runs `Test-Cluster` for Inventory, Network and
-System Configuration. Shared-storage tests are excluded because the AG uses
-independent SQL disks, not shared cluster storage. Reports remain on `JS-SQL-AG-01`
-under `C:\ArcJumpstart\Logs\ClusterValidation\Validation-<UTC>.htm`, with
-`.warnings.txt` and `.scope.txt` sidecars. Only narrowly recognized warnings about
-the lab's single network path/interface pair are accepted. Failed, canceled,
-unrun or unrecognized results block creation; do not bypass a report because
-the environment is a lab. All nodes share one Azure host, so these checks do
-not establish physical fault isolation.
-
-Existing unrelated AG state is not adopted, and a conflicting secondary database
-is not automatically dropped. Preserve its data and investigate before retrying.
-The final listener check runs from the standalone SQL guest under a local
-domain-admin process: it verifies DNS, TCP port `1433`, and an integrated-authentication SQL query
-against the intended primary database. This remote lab check also uses `-C` to
-trust the lab certificate; production clients need properly trusted certificates.
-The development lab completed stage `60` and its listener SQL check. Independent
-follow-up confirmed both cluster nodes and the witness online, one primary and
-one secondary, `JumpstartDB` synchronized and healthy on both replicas,
-`JumpstartStandaloneDB` online, and listener DNS/TCP reachability. The separate
-fresh stage `40` image proof also passed. A later clean-room recovery completed
-fresh parallel SQL installations and stages through `60`, but reused the earlier
-foundation/host allocation. A complete replay beginning with the updated stage
-`00` has not yet been performed; retain the per-stage gates on new deployments.
+All nested guests share one Azure host, so a healthy cluster demonstrates the
+software workflow—not physical fault-domain isolation. A complete clean replay
+of the current saved pipeline remains the repeatability acceptance gate.
 
 ## Verify the availability group
 

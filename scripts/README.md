@@ -93,7 +93,7 @@ service is required for this workshop.
 An attached agent should normally inspect a running build with:
 
 ```bash
-ENV_FILE=/absolute/private/path/lab.local.env ./scripts/lab.sh build-status
+ENV_FILE=/absolute/private/path/lab.env ./scripts/lab.sh build-status
 ```
 
 It discovers all concurrently active canonical stages, including overlapping
@@ -118,9 +118,9 @@ display. They do not rewrite the raw host transcript, which remains sensitive.
 All three operational wrappers support an alternative environment file:
 
 ```bash
-ENV_FILE=/absolute/private/path/lab.local.env ./scripts/preflight.sh infra &&
-ENV_FILE=/absolute/private/path/lab.local.env ./scripts/deploy.sh all
-ENV_FILE=/absolute/private/path/lab.local.env ./scripts/lab.sh status
+ENV_FILE=/absolute/private/path/lab.env ./scripts/preflight.sh infra &&
+ENV_FILE=/absolute/private/path/lab.env ./scripts/deploy.sh all
+ENV_FILE=/absolute/private/path/lab.env ./scripts/lab.sh status
 ```
 
 Replace that path with the approved file. Use a consistent configuration for
@@ -155,8 +155,8 @@ and [cleanup guide](../docs/06-troubleshooting-cleanup.md).
 
 ## Regression coverage
 
-`validate.sh` invokes `test-check-sql-media.py`, `test-runtime.py`,
-`test-skill.py`, `test-stage-log.py`, `test-bastion.py`, and, when
+`validate.sh` invokes `test-check-sql-media.py`, `test-docs.py`,
+`test-runtime.py`, `test-skill.py`, `test-stage-log.py`, `test-bastion.py`, and, when
 PowerShell is available, `test-stage40.ps1`, `test-stage45.ps1`,
 `test-stage50.ps1` and `test-stage60.ps1`.
 

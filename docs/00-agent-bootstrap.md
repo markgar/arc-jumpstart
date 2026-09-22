@@ -2,16 +2,17 @@
 
 ## Objective and boundary
 
-Automate the infrastructure so the learner can start with Arc installation,
-not spend the session preparing servers. The agent owns deployment, monitoring,
-safe recovery and readiness verification through stage `60`.
+Automate the infrastructure so the user reaches the one required interactive
+handoff: installing and connecting Arc with their own Azure identity. The agent
+owns deployment, monitoring, safe recovery, readiness verification through
+stage `60`, and staging the Arc launchers.
 
-| Automated preparation | Learner-led exercises afterward |
+| Agent-prepared prerequisite | User/workshop action afterward |
 |---|---|
-| Azure host, networking, disks and images | Arc-enabled server onboarding |
-| Nested Windows/Linux guests | Azure extension for SQL Server onboarding |
-| Windows setup/activation and domain services | Arc-based Azure Migrate discovery and assessment |
-| Three SQL installations, sample data, cluster, AG and listener | Optional replication, test migration and cutover |
+| Azure host, networking, disks and images | Open the staged launcher and authenticate Arc |
+| Nested guests, Windows setup and domain services | Perform or reuse an assessment |
+| Three SQL installations, sample data, cluster, AG and listener | Export Resource Graph modeling data |
+| Arc resource group, SQL licensing tag and desktop launchers | Migrate `JumpstartStandaloneDB` to SQL Managed Instance |
 
 The defaults produce five nested VMs: `JS-DC-01`, `JS-SQL-01`,
 `JS-SQL-AG-01`, `JS-SQL-AG-02` and `JS-UBUNTU-01`. The domain is
@@ -68,9 +69,9 @@ non-safety setting:
 | Host, DSRM and SQL service passwords | Generate unique strong values directly in the approved private file when the user has not supplied them |
 | Nested Windows password | The documented source-image password, unless the image source is overridden |
 | Auto-shutdown | Ask whether to enable it, and if enabled ask for the daily time and time zone; never infer consent from repository defaults |
-| Arc desktop launchers | Stage on all Windows guests by default; they remain inert until the learner opens one. Allow `PREPARE_ARC_LAUNCHERS=false` as an override |
+| Arc desktop launchers | Stage on all Windows guests by default; they remain inert until the user opens one and authenticates. Allow `PREPARE_ARC_LAUNCHERS=false` as an override |
 | Execution | Validation, infrastructure preflight and `deploy.sh all` in a separate terminal or asynchronous process |
-| Learning exercises | Stop after stage `60`; no Arc onboarding, assessment or migration |
+| User boundary | Stop after staging launchers; do not connect Arc, run assessment or migrate data |
 
 The agent still requires explicit approval for the Azure subscription and
 dedicated resource group, the billable footprint and applicable licensing
@@ -260,7 +261,8 @@ Do not hand off solely because the outer VM exists or an ARM deployment says
 | AG | One primary and one secondary; `JumpstartDB` synchronized, healthy and not suspended on both. |
 | Listener | Intended DNS/IP and TCP `1433`, plus an actual integrated-authentication SQL query from the standalone guest to the primary database. |
 | Migration sample | `JumpstartStandaloneDB` online on `JS-SQL-01`. |
-| Learning boundary | No Arc onboarding, collector installation or migration has been performed by bootstrap. |
+| Arc handoff | Dedicated Arc resource group and licensing tag exist; **Connect to Azure Arc.cmd** is staged on every Windows guest. |
+| User boundary | Arc launchers are staged, but no Arc connection, assessment, collector installation or migration has been performed. |
 
 Use [domain verification](02-domain-controller.md#verify-the-domain-and-members)
 and [AG verification](02-deploy.md#verify-the-availability-group). Note that
@@ -283,10 +285,11 @@ Raw artifacts remain sensitive. Use the redacting viewer, review exports and
 record reusable lessons in the repo rather than requiring a future agent to
 find this session's private files.
 
-Stop at the ready-environment boundary. The next guides are
-[Arc onboarding](03-arc-onboarding.md), [assessment](04-assessment.md) and
-[optional migration](05-migration.md). Follow them with the learner when asked,
-not automatically as part of provisioning.
+Stop at the ready-environment boundary. The user completes
+[interactive Arc setup](03-arc-onboarding.md) with their own identity. The
+workshop then follows [assessment and modeling](04-assessment.md) and
+[single-database migration](05-migration.md). Do not perform those steps
+automatically as part of provisioning.
 
 ## Acceptance of the automation itself
 

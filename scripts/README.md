@@ -20,19 +20,19 @@ inputs and required ready-environment outcome.
 |---|---|
 | `./scripts/validate.sh` | Bicep compilation, Bash syntax, Python regression tests and available ShellCheck/PowerShell checks. Does not deploy Azure resources. It may run from Git Bash on native Windows, but that validates source only; full coverage requires the optional tools to be present. |
 | `./scripts/preflight.sh infra` | Checks the configured Azure target, required infrastructure registrations, host SKU availability and download reachability; prints cost considerations. Does not provision the lab or automatically register providers. |
-| `./scripts/preflight.sh full` | Also checks registrations for the later Arc/assessment/migration exercises. Does not perform those exercises. |
+| `./scripts/preflight.sh full` | Also checks registrations for user-authenticated Arc setup and the later assessment/modeling and SQL Managed Instance migration activities. Does not perform them. |
 | `./scripts/deploy.sh all` | Runs the complete saved infrastructure sequence through stage `60`. Intended for a new lab, not blanket repair of an existing domain. |
 | `./scripts/deploy.sh 60` | Runs one supported stage. Other numbers are `00`, `10`, `20`, `30`, `40`, `45` and `50`. Use for scoped recovery and then continue with successors. |
 | `./scripts/deploy.sh 20-30` | Starts image downloads and configures the independent host network while they run, then requires successful download completion. Requires a ready stage `10` host; do not use while either earlier operation is active. |
 | `./scripts/deploy.sh bastion` | Submits only the independent Bastion deployment with `--no-wait`, against an existing foundation network. Explicitly requests Bastion even when `DEPLOY_BASTION=false`; requires only the four Azure target settings, not guest credentials. Does not verify readiness. |
 | `./scripts/deploy.sh auto-shutdown` | Creates, updates, enables or disables only the outer host's daily Azure auto-shutdown schedule. It never replays host initialization or nested infrastructure stages. |
-| `./scripts/deploy.sh arc-launchers` | Creates/tags the dedicated Arc resource group and securely stages **Connect to Azure Arc** on all four Windows guest public desktops. It does not connect any machine; the learner completes device-code authentication interactively. |
+| `./scripts/deploy.sh arc-launchers` | Creates/tags the dedicated Arc resource group and securely stages **Connect to Azure Arc** on all four Windows guest public desktops. It does not connect any machine; the user completes device-code authentication with their own Azure identity. |
 | `./scripts/lab.sh status` | Reports outer host power state only; not whole-lab readiness. |
 | `./scripts/lab.sh build-status` | Discovers every active canonical stage and displays each existing Managed Run Command instance view. If none is active, displays the most recently started stage. Does not launch a VM command. |
 | `./scripts/lab.sh stage-log 60` | Displays the latest stage transcript through `show-stage-log.py`, suppressing startup headers and redacting configured sensitive values. Raw host files remain sensitive. |
 | `./scripts/lab.sh stage-progress 40` | Reads the active Managed Run Command's existing instance view and returns state, start/end, elapsed time and latest redacted output. It does not launch another command inside the busy VM. |
-| `./scripts/lab.sh stop` / `start` | Deallocates or starts the outer Azure host. Deallocation does not stop storage/Bastion charges; keep the host allocated during replication/migration. |
-| `./scripts/lab.sh retire-source JS-SQL-01` | Stops and marks a migrated source retired. Also supports `JS-UBUNTU-01`. Use only as part of an authorized cutover. |
+| `./scripts/lab.sh inventory` | Runs the versioned Azure Resource Graph query against the configured Arc resource group and writes timestamped raw JSON and modeling CSV under `out/arc-modeling/`. Run only after Arc and assessment inventory are current. |
+| `./scripts/lab.sh stop` / `start` | Deallocates or starts the outer Azure host. Deallocation does not stop storage, Bastion, or SQL Managed Instance charges. |
 | `./scripts/lab.sh delete-infra YOUR_RESOURCE_GROUP` | Deletes the configured infrastructure RG only when the argument matches it. Requires explicit deletion approval and the wider cleanup sequence first. |
 | `python3 scripts/check-sql-media.py --help` | Optional local media diagnostic; stage `45` already performs its own media checks. |
 
@@ -156,6 +156,7 @@ and [cleanup guide](../docs/06-troubleshooting-cleanup.md).
 ## Regression coverage
 
 `validate.sh` invokes `test-check-sql-media.py`, `test-docs.py`,
+`test-export-arc-inventory.py`,
 `test-runtime.py`, `test-skill.py`, `test-stage-log.py`, `test-bastion.py`, and, when
 PowerShell is available, `test-stage40.ps1`, `test-stage45.ps1`,
 `test-stage50.ps1` and `test-stage60.ps1`.

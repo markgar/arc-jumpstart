@@ -43,9 +43,12 @@ class DocumentationTests(unittest.TestCase):
         scripts = (ROOT / "scripts" / "README.md").read_text()
         self.assertIn("Standard_E16s_v7", readme)
         self.assertIn("westus2", readme)
-        self.assertIn("SQL Server 2025\nEnterprise Developer", readme)
+        self.assertIn("SQL Server 2025 Enterprise Developer", readme.replace("\n", " "))
         self.assertNotIn("lab.local.env", readme + prerequisites + scripts)
         self.assertNotIn("imageSourceUrl", readme)
+        self.assertNotIn("Hyper-V replication", readme)
+        self.assertIn("arc-sql-modeling-inventory.kql", (ROOT / "docs" / "04-assessment.md").read_text())
+        self.assertIn("JumpstartStandaloneDB", (ROOT / "docs" / "05-migration.md").read_text())
 
 
 if __name__ == "__main__":

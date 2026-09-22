@@ -28,7 +28,7 @@ function Assert-EngineArguments {
         throw 'Lab preparation must install FEATURES=SQLENGINE only.'
     }
     if ($Arguments -match '(?i)AZUREEXTENSION|(?:^|\s)/(?:AZURE|ARC)[A-Z]*|azcmagent|AzureConnectedMachineAgent') {
-        throw 'Arc and Arc SQL extension onboarding must remain learner-operated.'
+        throw 'Arc and Arc SQL extension onboarding must remain user-operated.'
     }
 }
 function Get-FunctionText {
@@ -108,7 +108,7 @@ foreach ($arguments in @('/FEATURES=SQLENGINE,AZUREEXTENSION', '/FEATURES=SQLENG
 }
 foreach ($flag in @('/AZUREEXTENSION', '/AZURETENANTID=example', '/AZURESUBSCRIPTIONID=example',
     '/AZURESERVICEPRINCIPALSECRET=example', '/ARCONBOARD=true', 'azcmagent connect')) {
-    Assert-Throws { Assert-EngineArguments "/FEATURES=SQLENGINE $flag" } 'learner-operated'
+    Assert-Throws { Assert-EngineArguments "/FEATURES=SQLENGINE $flag" } 'user-operated'
 }
 
 & {

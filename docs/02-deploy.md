@@ -106,7 +106,11 @@ are not guaranteed to take the same time as a single install.
 
 Running stage `45` accepts Microsoft's installer license terms. Developer edition is for development, testing, and training, not production. The host must be able to reach the Microsoft download endpoints and any redirect destinations. Guest installation runs synchronously as the guest's local Administrator through a held PowerShell Direct session and preserves setup diagnostics; it does not create an installation scheduled task. The stage checks SQL queries and sysadmin access before succeeding; a running Windows guest or SQL service alone is insufficient. A rerun verifies and retains a healthy installation rather than reinstalling it. A conflicting or broken existing instance is reported for investigation, not silently overwritten. Use `./scripts/lab.sh stage-log 45` for the host log.
 
-Stage `45` installs `SQLENGINE` only, not `AZUREEXTENSION`. Stages `00` through `60` prepare the infrastructure and sample workloads; they do not install or connect Azure Arc or the Azure extension for SQL Server. The learner performs those actions by following [Arc and Arc SQL onboarding](03-arc-onboarding.md).
+Stage `45` installs `SQLENGINE` only, not `AZUREEXTENSION`. Stages `00` through
+`60` prepare the infrastructure and sample workloads; they do not install or
+connect Azure Arc or the Azure extension for SQL Server. After the agent stages
+the launchers, the user completes [interactive Arc setup](03-arc-onboarding.md)
+with their own Azure identity.
 
 For stage `50`, read the [automated domain-controller runbook](02-domain-controller.md).
 It explains the AD/DNS bootstrap sequence, credentials, service account,

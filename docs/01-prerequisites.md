@@ -8,13 +8,17 @@ You need:
 - Permission to register resource providers.
 - The subscription feature `Microsoft.Compute/UseStandardSecurityType`, required to deploy the nested-virtualization host without Trusted Launch.
 - A tenant account that can create an Azure Migrate project and assign its managed identity the preview discovery role.
+- Permission to create Azure SQL Managed Instance and its delegated subnet for
+  the final workshop activity.
 - Azure CLI with the Bicep CLI installed.
+- The Azure CLI Resource Graph extension for the modeling export.
 
 Check the tools:
 
 ```bash
 az version
 az bicep version
+az extension add --name resource-graph
 ```
 
 Register the providers used across the infrastructure and labs:
@@ -32,8 +36,7 @@ for provider in \
   Microsoft.AzureArcData \
   Microsoft.OffAzure \
   Microsoft.Migrate \
-  Microsoft.RecoveryServices \
-  Microsoft.DataReplication \
+  Microsoft.Sql \
   Microsoft.KeyVault \
   Microsoft.Insights
 do
@@ -47,19 +50,23 @@ The suggested host is Windows Server 2022 on `Standard_E16s_v7` with 16 vCPUs
 and 128 GiB RAM in `westus2`. These are overridable starting points that avoid
 known subscription restrictions encountered with the earlier East US 2 /
 E16s_v5 combination; availability, quota, capacity, and pricing still vary by
-subscription and time. Windows Server 2022 is used because it is currently
-listed in the Azure Migrate Hyper-V replication support matrix. Confirm that:
+subscription and time. Confirm that:
 
 1. The size is available in your chosen region.
 2. Your regional vCPU quota can accommodate it.
 3. The selected size exposes nested virtualization.
 
-The lab also creates a 1 TiB Premium SSD, optional Azure Bastion, a public IP for Bastion, and normal networking resources. Stop or deallocate the host when not in use. Deallocation stops compute billing but not disk, Bastion, or public IP charges.
+The prerequisite lab creates a 1 TiB Premium SSD, optional Azure Bastion, a
+public IP for Bastion, and normal networking resources. The migration activity
+also creates a temporary SQL managed instance and storage account after a
+separate cost decision. Stop or deallocate the host when not in use.
+Deallocation stops host compute billing but not disk, Bastion, public IP,
+storage, or SQL Managed Instance charges.
 
 The lab supports an optional daily Azure auto-shutdown schedule for the outer
 host. Always ask the operator whether to enable it and for the intended local
 time and time zone. Do not enable it silently: shutdown can interrupt active
-assessment, replication, test migration or cutover work.
+assessment, inventory collection, backup, or migration work.
 
 ## Credentials
 

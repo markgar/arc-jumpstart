@@ -309,9 +309,9 @@ A complete clean replay beginning with the updated stage `00` has not been
 performed. The clean-room recovery did prove fresh parallel SQL installations
 and the remaining stages through `60`, but reused foundation/host resources from
 the stopped attempt. The documented Datacenter key mapping was not the live
-image used in the separate image proof. Arc onboarding, assessment, migration
-compatibility and cutover remain separate learner exercises, not completed
-outcomes or additional automation hidden in stage `60`.
+image used in the separate image proof. User-authenticated Arc connection,
+assessment/modeling, and single-database migration remain separate steps, not
+completed outcomes or additional automation hidden in stage `60`.
 
 ## Microsoft references
 

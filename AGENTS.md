@@ -25,8 +25,10 @@ requiring the learner to install Windows, configure AD, install SQL or debug
 cluster provisioning manually. Infrastructure is automated preparation, not
 the curriculum.
 
-The learner practices Azure Arc / Arc SQL onboarding, assessment and optionally
-migration. Do not perform those exercises as hidden bootstrap steps.
+The agent prepares the infrastructure and Arc launchers. The user installs and
+connects the Arc agent interactively with their own Azure identity. The workshop
+then covers assessment, Resource Graph inventory modeling, and a simple
+single-database migration to Azure SQL Managed Instance.
 
 ## Start here
 
@@ -92,25 +94,15 @@ the next build.
 
 - Keep Bicep as the infrastructure source; do not replace stages with copied ARM
   JSON or untracked portal changes.
-- Do not install/onboard Arc, enable assessment collectors or initiate migration
-  during infrastructure preparation unless separately requested.
-- When separately assisting with Arc onboarding, install the Connected Machine
-  agent but stop before `azcmagent connect`. Run
-  `azcmagent check --location <arc-region>` on that guest and resolve every
-  required endpoint failure before connecting it. A successful MSI/package
-  download proves only general HTTPS access, not Arc service connectivity.
-  Never start a competing check while a connect operation is active; wait for
-  the first operation to become terminal, then check before any retry.
-- Choose authentication for the actual operator model. A learner signed in at
-  the guest console may complete the generated device-code flow. An agent
-  operating through PowerShell Direct, Run Command or another noninteractive
-  channel must never launch a device-code connection and wait for a person who
-  cannot see or answer it. With explicit user approval, use a dedicated
-  short-lived service principal scoped to the Arc resource group with only the
-  `Azure Connected Machine Onboarding` role. Keep its secret in approved
-  owner-only storage outside the worktree, pass it only at execution time, and
-  remove the credential or dedicated principal after onboarding. Do not print
-  the secret, generated connect command or raw process arguments.
+- Do not connect Arc, enable assessment collectors or initiate migration during
+  infrastructure preparation. Stage the Arc launchers, then stop for the user.
+- Arc connection is user-authenticated. The user opens the launcher at the
+  guest console, observes the required endpoint check, and completes the
+  device-code flow with their own Azure identity. Service-principal onboarding
+  and unattended Arc connection are out of scope.
+- Never launch `azcmagent connect` through PowerShell Direct, Run Command or
+  another noninteractive channel. Never start a competing check while a connect
+  operation is active; wait for it to become terminal before troubleshooting.
 - Never print or commit `deploy.env`, passwords, SAS tokens or registration keys.
   Use `lab.sh stage-log`; raw Windows transcripts can contain credentials.
 - Never bypass OOBE, licensing, SQL readiness, cluster validation or operation

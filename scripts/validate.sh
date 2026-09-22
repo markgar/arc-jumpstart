@@ -28,6 +28,7 @@ done
 python3 scripts/test-check-sql-media.py
 python3 scripts/test-arc-launcher.py
 python3 scripts/test-runtime.py
+python3 scripts/test-skill.py
 python3 scripts/test-stage-log.py
 python3 scripts/test-bastion.py
 

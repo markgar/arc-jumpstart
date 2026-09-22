@@ -13,6 +13,29 @@ without rediscovering setup fixes from a previous conversation. Start at
 The implementation maps are in [infra/README.md](infra/README.md) and
 [scripts/README.md](scripts/README.md).
 
+## Guided setup with Copilot
+
+This repository publishes an optional `arc-jumpstart` agent skill that guides
+Copilot through prerequisites, secure configuration, deployment, monitoring,
+recovery, and the learner handoff. With GitHub CLI 2.90.0 or later, inspect the
+skill before installing it:
+
+```text
+gh skill preview markgar/arc-jumpstart arc-jumpstart
+gh skill install markgar/arc-jumpstart arc-jumpstart --agent github-copilot --scope user
+```
+
+`gh skill` is in public preview. The user-scoped installation makes the skill
+available without modifying the repository checkout. Start a new Copilot
+session or run `/skills reload`, then ask:
+
+```text
+Use /arc-jumpstart to help me build this lab.
+```
+
+The skill is optional and contains guidance only. The repository scripts and
+runbooks remain the implementation and source of truth.
+
 This repository is a new Bicep-first implementation. It is not a fork of
 [`microsoft/azure_arc`](https://github.com/microsoft/azure_arc) and does not copy its ARM templates or orchestration code. It currently consumes Microsoft's public Jumpstart VHDX artifacts as an external image source.
 

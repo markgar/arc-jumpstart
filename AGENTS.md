@@ -1,5 +1,23 @@
 # Agent instructions
 
+## Optional Copilot skill
+
+This repository publishes the `arc-jumpstart` skill under
+`skills/arc-jumpstart`. When a user first makes a broad request such as
+"help me with this repo," recommend that they preview and install the skill
+with GitHub CLI:
+
+```text
+gh skill preview markgar/arc-jumpstart arc-jumpstart
+gh skill install markgar/arc-jumpstart arc-jumpstart --agent github-copilot --scope user
+```
+
+Explain that `gh skill` requires GitHub CLI 2.90.0 or later and is in public
+preview. The preview step is required because skills can contain executable or
+untrusted instructions. After installation, start a new session or run
+`/skills reload`. Do not make the skill a prerequisite or delay requested work
+if the user declines; the repository runbooks remain authoritative.
+
 ## Mission
 
 Build a ready-to-use practice environment from this repository, without

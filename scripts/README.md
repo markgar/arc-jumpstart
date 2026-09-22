@@ -156,7 +156,7 @@ and [cleanup guide](../docs/06-troubleshooting-cleanup.md).
 ## Regression coverage
 
 `validate.sh` invokes `test-check-sql-media.py`, `test-runtime.py`,
-`test-stage-log.py`, `test-bastion.py`, and, when
+`test-skill.py`, `test-stage-log.py`, `test-bastion.py`, and, when
 PowerShell is available, `test-stage40.ps1`, `test-stage45.ps1`,
 `test-stage50.ps1` and `test-stage60.ps1`.
 

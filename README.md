@@ -82,12 +82,13 @@ lab management require WSL2. See the
 
 ## Configure and build
 
-Create the private environment file in durable owner-only storage. This example
-works on macOS, Linux, and inside WSL2:
+Create the private environment file in the visible `ArcJumpstart` folder in your
+home directory, outside the repository. This example works on macOS, Linux, and
+inside WSL2:
 
 ```bash
-ENV_FILE="$HOME/.config/arc-jumpstart/lab.env"
-mkdir -p "$(dirname "$ENV_FILE")"
+ENV_FILE="$HOME/ArcJumpstart/lab.env"
+mkdir -p -m 700 "$(dirname "$ENV_FILE")"
 if [[ ! -f "$ENV_FILE" ]]; then
   install -m 600 deploy.env.example "$ENV_FILE"
 fi
@@ -128,6 +129,29 @@ recovery, rerun only the failed stage and required successors—never rerun
 `all` against an already promoted domain.
 
 ## Use the lab
+
+### Find your lab configuration and passwords
+
+Your `lab.env` file contains the lab configuration and passwords. For new labs,
+use the visible `ArcJumpstart` folder, not a hidden folder. At the end of setup,
+the agent must explicitly give you the **actual full path**, plus instructions
+for finding and opening your file. Do not share or commit its contents.
+
+| Platform | Usual full path (replace the example username) | Find and view the file |
+|---|---|---|
+| macOS | `/Users/alex/ArcJumpstart/lab.env` | In Finder, choose **Go > Home**, then open **ArcJumpstart**. Right-click `lab.env` and choose **Open With > TextEdit** to view it. |
+| Windows with WSL2 | `/home/alex/ArcJumpstart/lab.env` inside WSL; `\\wsl.localhost\Ubuntu\home\alex\ArcJumpstart\lab.env` in Windows for an Ubuntu distro | Paste the folder path `\\wsl.localhost\Ubuntu\home\alex\ArcJumpstart` into File Explorer's address bar and press Enter. Right-click `lab.env` and open it with Notepad to view it. Use the actual distro and username supplied by the agent. |
+| Linux | `/home/alex/ArcJumpstart/lab.env` | Open **Home > ArcJumpstart** in your file manager and open `lab.env` in a text editor. |
+
+These are examples, not a way to locate an existing lab automatically. If you
+already use a different `ENV_FILE`, keep using that exact file; do not overwrite
+or silently move it. The agent must report its actual location instead. On
+macOS, **Finder > Go > Go to Folder** also accepts the full containing folder
+path. On Windows, edit the file inside WSL and retain owner-only permissions.
+If deployment runs on a remote execution host, the file is on that host, not
+necessarily your laptop; the handoff must identify the host and how to access it.
+
+### Learner guides
 
 - [Deployment, access, and SSMS](docs/02-deploy.md)
 - [Complete user-authenticated Arc setup](docs/03-arc-onboarding.md)

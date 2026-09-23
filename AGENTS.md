@@ -50,6 +50,8 @@ the next build.
    Confirm the user's approved Azure target and cost/destructive-action scope.
 2. Obtain missing authentication/configuration inputs securely. Do not overwrite
    an existing environment file or reuse a shared resource group implicitly.
+   For new labs, use `$HOME/ArcJumpstart/lab.env` in a visible, owner-only
+   folder outside the repository; do not create configuration in hidden folders.
 3. For a new lab, run from the repository root:
 
    ```bash
@@ -88,6 +90,12 @@ the next build.
    regression tests before retrying the affected stage.
 7. Verify the ready-environment contract in the bootstrap runbook. Hand back
    non-secret resource identifiers, readiness evidence and the learner guides.
+   Explicitly present the actual full `ENV_FILE` path and instructions to find
+   and view it in the final user-facing handoff, not just in logs. On macOS,
+   include Finder navigation and Open With TextEdit; on Windows, include the
+   full File Explorer path with the actual WSL distro/user and Open With Notepad.
+   Identify the execution host if remote. Explain that the file contains lab
+   configuration and passwords; never display its contents.
    State any blockers or unproven outcomes explicitly.
 
 ## Non-negotiable boundaries

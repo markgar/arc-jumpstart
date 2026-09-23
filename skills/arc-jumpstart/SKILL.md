@@ -21,8 +21,10 @@ PowerShell implementation.
    environments only.
 4. Confirm the approved Azure subscription, dedicated resource group, region,
    cost scope, and auto-shutdown decision before provisioning.
-5. Use a private `ENV_FILE` outside the repository. Never print, commit,
-   overwrite, or infer credentials.
+5. Use a private `ENV_FILE` outside the repository. For new labs, use the visible
+   `$HOME/ArcJumpstart/lab.env`, not a hidden folder. Preserve an existing lab's
+   exact path; never silently move it. Never print, commit, overwrite, or infer
+   credentials.
 
 If required information is missing, ask only for that information. Apply the
 documented defaults for routine choices.
@@ -82,3 +84,15 @@ Verify the ready-environment contract in `docs/00-agent-bootstrap.md`. Report
 non-secret resource identifiers, readiness evidence, skipped validation, and
 any unproven outcomes. Point the user to Arc setup, assessment/modeling, or the
 single-database migration guide as appropriate.
+
+Explicitly include **Your lab configuration and passwords** in the final
+user-facing handoff. Verify the configuration file exists, give its actual full
+absolute path (not `$HOME`, `~`, or a placeholder), and explain how to find and
+view it. On macOS, provide Finder **Go to Folder** instructions and **Open With
+TextEdit**. On Windows, provide both the WSL path and full File Explorer path
+using the actual distro/user, and **Open With Notepad**. On Linux, provide file
+manager/text editor instructions. Identify any remote execution host and its
+approved access method. Never display the contents; warn that the file contains
+passwords and must not be shared or committed. Follow the detailed handoff
+contract in `docs/00-agent-bootstrap.md`; a terminal log or documentation link
+alone does not satisfy it.

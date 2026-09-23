@@ -211,6 +211,14 @@ With Bastion enabled and its separate deployment succeeded:
 3. Sign in with `HOST_ADMIN_USERNAME` and `HOST_ADMIN_PASSWORD`.
 4. Open Hyper-V Manager.
 
+Stage `20` enables the Hyper-V Enhanced Session Mode host policy, and stage
+`40` enables the Windows guest Remote Desktop Services prerequisite. VMConnect
+can therefore resize supported Windows guest desktops and offer
+clipboard/device redirection over the Hyper-V bus without guest network
+connectivity. If a console opens in Basic Session Mode, use the Enhanced
+Session Mode button on the VMConnect toolbar. The Linux guest continues to use
+its normal console.
+
 Expected nested VMs:
 
 | VM | Expected role |

@@ -25,6 +25,13 @@ $logRoot = Join-Path $root 'Logs'
 New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
 Start-Transcript -Path (Join-Path $logRoot "20-host-network-$RunId.log") -Force
 
+function Enable-HyperVEnhancedSessionMode {
+    Set-VMHost -EnableEnhancedSessionMode $true
+    if (-not (Get-VMHost).EnableEnhancedSessionMode) {
+        throw 'Hyper-V Enhanced Session Mode policy did not remain enabled.'
+    }
+}
+
 try {
     Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage20] Configuring Hyper-V services, internal switch, NAT, and DHCP."
     if ($NestedNetworkPrefix -notmatch '^[0-9]+\.[0-9]+\.[0-9]+\.0/24$') {
@@ -40,6 +47,7 @@ try {
 
     Set-Service -Name vmms -StartupType Automatic
     Start-Service -Name vmms
+    Enable-HyperVEnhancedSessionMode
     Set-Service -Name DHCPServer -StartupType Automatic
     Start-Service -Name DHCPServer
 

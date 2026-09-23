@@ -158,7 +158,7 @@ and [cleanup guide](../docs/06-troubleshooting-cleanup.md).
 `validate.sh` invokes `test-check-sql-media.py`, `test-docs.py`,
 `test-export-arc-inventory.py`,
 `test-runtime.py`, `test-skill.py`, `test-stage-log.py`, `test-bastion.py`, and, when
-PowerShell is available, `test-stage40.ps1`, `test-stage45.ps1`,
+PowerShell is available, `test-stage20.ps1`, `test-stage40.ps1`, `test-stage45.ps1`,
 `test-stage50.ps1` and `test-stage60.ps1`.
 
 Preserve coverage for generated command arguments, real native report formats,

@@ -89,12 +89,14 @@ reason to present the specific blocked decision, not to restart the entire
 questionnaire.
 
 Keep the configuration in approved durable, owner-only storage outside the
-repository. The exact location is operator-specific. On macOS,
-`$HOME/.config/arc-jumpstart/lab.env` is a convenient example:
+repository. For new labs on macOS, Linux, and WSL2, use the visible
+`$HOME/ArcJumpstart/lab.env` location. Do not create configuration in hidden
+folders. Preserve an existing lab's exact `ENV_FILE`; do not silently move or
+overwrite it. A user-approved alternative for a new lab must also be visible.
 
 ```bash
-ENV_FILE="$HOME/.config/arc-jumpstart/lab.env"
-mkdir -p "$(dirname "$ENV_FILE")"
+ENV_FILE="$HOME/ArcJumpstart/lab.env"
+mkdir -p -m 700 "$(dirname "$ENV_FILE")"
 if [[ ! -f "$ENV_FILE" ]]; then
   install -m 600 deploy.env.example "$ENV_FILE"
 fi
@@ -262,6 +264,7 @@ Do not hand off solely because the outer VM exists or an ARM deployment says
 | Listener | Intended DNS/IP and TCP `1433`, plus an actual integrated-authentication SQL query from the standalone guest to the primary database. |
 | Migration sample | `JumpstartStandaloneDB` online on `JS-SQL-01`. |
 | Arc handoff | Dedicated Arc resource group and licensing tag exist; **Connect to Azure Arc.cmd** is staged on every Windows guest. |
+| Configuration handoff | The actual full `ENV_FILE` path, execution host, and platform-specific find/view instructions have been explicitly presented to the user without exposing file contents. |
 | User boundary | Arc launchers are staged, but no Arc connection, assessment, collector installation or migration has been performed. |
 
 Use [domain verification](02-domain-controller.md#verify-the-domain-and-members)
@@ -273,6 +276,39 @@ and [AG verification](02-deploy.md#verify-the-availability-group). Note that
 Provide the configured resource group/host, guest roles, successful stage/run
 identifiers, actual readiness results and any limitations. Do not include
 credentials or raw transcript headers.
+
+The final user-facing response must include a prominent **Your lab configuration
+and passwords** section. This is required even if the location was already
+mentioned during setup or printed in a terminal:
+
+- State that the private `lab.env` file contains the lab configuration and
+  passwords, and must not be shared or committed.
+- Give the actual full absolute path of the file used for this lab, with the
+  username expanded. Do not provide only `ENV_FILE`, `$HOME`, `~`, a sample
+  path, or a link to documentation. Verify that this file still exists without
+  displaying its contents.
+- On macOS, give the actual containing folder path for **Finder > Go > Go to
+  Folder**, then instruct the user to right-click the file and choose
+  **Open With > TextEdit** to view it.
+- On Windows/WSL2, give both the absolute WSL path and the full Windows File
+  Explorer path. Obtain the actual distribution name from `WSL_DISTRO_NAME`
+  in the deployment's WSL environment; do not assume Ubuntu. For a WSL-native
+  absolute path, the Windows path is `\\wsl.localhost\<distro>` followed by
+  that path with backslashes. Provide the actual containing folder path to paste
+  into File Explorer's address bar, and instruct the user to open the file with
+  Notepad to view it. Make edits inside WSL and retain mode `600`.
+- On Linux, give the containing folder path to open in the file manager and
+  instruct the user to view the file with a text editor.
+- If the execution host is remote, name it and provide the approved way to
+  access the file there. Do not imply a remote path is on the user's laptop.
+  If the path or access method cannot be verified, state that handoff blocker
+  rather than inventing a location.
+
+Use the real path even for a pre-existing lab in a legacy location. A path
+change requires the user's approval; do not create a second configuration just
+to match the new convention. The
+[user-facing location guide](../README.md#find-your-lab-configuration-and-passwords)
+contains platform examples.
 
 The normal diagnostic locations are:
 

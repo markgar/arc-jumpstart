@@ -68,6 +68,14 @@ in version control. The ignored repository-root `deploy.env` is retained as a
 compatibility fallback; durable external storage is recommended, especially
 for disposable worktrees.
 
+For new labs, create the private file at `$HOME/ArcJumpstart/lab.env` in a visible
+folder, not a hidden folder, and pass that path through `ENV_FILE`. Existing
+overrides and the legacy fallback remain supported; do not silently move or
+overwrite an existing file. The agent's final handoff must explicitly include
+the actual full path and platform-specific instructions to find and view it,
+including a Windows File Explorer path for WSL users. See
+[Find your lab configuration and passwords](../README.md#find-your-lab-configuration-and-passwords).
+
 `AUTO_SHUTDOWN_ENABLED` has no implicit default. For every new lab, ask the
 operator whether to enable it and record `true` or `false`. When enabled,
 `AUTO_SHUTDOWN_TIME` is a 24-hour `HHmm` value and

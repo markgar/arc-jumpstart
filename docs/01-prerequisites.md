@@ -72,7 +72,8 @@ assessment, inventory collection, backup, or migration work.
 
 Copy `deploy.env.example` to an owner-only file outside the repository and set
 `ENV_FILE` to its absolute path. On macOS, Linux, or WSL2,
-`$HOME/.config/arc-jumpstart/lab.env` is a convenient location. Use unique
+use the visible `$HOME/ArcJumpstart/lab.env` location for new labs, not a hidden
+folder. Use unique
 passwords for:
 
 - The outer Hyper-V host.
@@ -198,17 +199,26 @@ project files on the same operating system as the tools that operate on them;
 this also preserves Linux permissions and avoids cross-filesystem path and
 performance problems.
 
-Keep the environment file in the WSL home directory, not in the Windows
-checkout or repository:
+Keep the environment file in the visible `ArcJumpstart` folder in the WSL home
+directory, not in the Windows checkout or repository:
 
 ```bash
-mkdir -p "$HOME/.config/arc-jumpstart"
-install -m 600 deploy.env.example "$HOME/.config/arc-jumpstart/lab.env"
-export ENV_FILE="$HOME/.config/arc-jumpstart/lab.env"
+export ENV_FILE="$HOME/ArcJumpstart/lab.env"
+mkdir -p -m 700 "$(dirname "$ENV_FILE")"
+if [[ ! -f "$ENV_FILE" ]]; then
+  install -m 600 deploy.env.example "$ENV_FILE"
+fi
 ```
 
 Edit the file inside WSL and retain mode `600`. A Windows `chmod` result on
 NTFS is not an equivalent owner-only ACL guarantee.
+
+To find it from Windows, paste
+`\\wsl.localhost\<distro>\home\<WSL-user>\ArcJumpstart` into File Explorer's
+address bar. Open `lab.env` with Notepad to view it. The agent must provide the
+actual full Windows path and WSL path at handoff, with no placeholders. See
+[Find your lab configuration and passwords](../README.md#find-your-lab-configuration-and-passwords)
+for macOS and Linux instructions as well.
 
 ### Windows without WSL2
 

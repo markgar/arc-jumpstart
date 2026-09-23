@@ -3,8 +3,8 @@
 ## Configure
 
 ```bash
-ENV_FILE="$HOME/.config/arc-jumpstart/lab.env"
-mkdir -p "$(dirname "$ENV_FILE")"
+ENV_FILE="$HOME/ArcJumpstart/lab.env"
+mkdir -p -m 700 "$(dirname "$ENV_FILE")"
 if [[ ! -f "$ENV_FILE" ]]; then
   install -m 600 deploy.env.example "$ENV_FILE"
 fi
@@ -12,6 +12,12 @@ ${EDITOR:-vi} "$ENV_FILE"
 ./scripts/validate.sh
 ENV_FILE="$ENV_FILE" ./scripts/preflight.sh infra
 ```
+
+Keep this file in a visible folder outside the repository. Do not overwrite or
+silently move an existing lab's configuration. At completion, the agent must
+explicitly present the actual full file path and platform-specific instructions
+to find and view it; see
+[Find your lab configuration and passwords](../README.md#find-your-lab-configuration-and-passwords).
 
 The wrapper uses your signed-in Entra user to deploy Azure resources. Each PowerShell artifact is embedded in its Bicep-managed Run Command, avoiding a public deployment storage dependency. This is unrelated to the local Active Directory domain created inside the nested lab.
 

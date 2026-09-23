@@ -54,6 +54,44 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("arc-sql-modeling-inventory.kql", (ROOT / "docs" / "04-assessment.md").read_text())
         self.assertIn("JumpstartStandaloneDB", (ROOT / "docs" / "05-migration.md").read_text())
 
+    def test_configuration_uses_visible_folder(self):
+        for relative in (
+            "README.md",
+            "AGENTS.md",
+            "docs/00-agent-bootstrap.md",
+            "docs/01-prerequisites.md",
+            "docs/02-deploy.md",
+            "scripts/README.md",
+            "skills/arc-jumpstart/SKILL.md",
+        ):
+            with self.subTest(document=relative):
+                text = (ROOT / relative).read_text()
+                self.assertIn("$HOME/ArcJumpstart/lab.env", text)
+                self.assertNotIn(".config/arc-jumpstart", text)
+
+    def test_configuration_handoff_is_explicit_and_platform_specific(self):
+        for relative in (
+            "AGENTS.md",
+            "docs/00-agent-bootstrap.md",
+            "skills/arc-jumpstart/SKILL.md",
+        ):
+            with self.subTest(document=relative):
+                text = " ".join((ROOT / relative).read_text().split())
+                for requirement in (
+                    "actual full",
+                    "user-facing",
+                    "Finder",
+                    "TextEdit",
+                    "File Explorer",
+                    "Notepad",
+                    "execution host",
+                ):
+                    self.assertIn(requirement, text)
+        bootstrap = (ROOT / "docs/00-agent-bootstrap.md").read_text()
+        self.assertIn("WSL_DISTRO_NAME", bootstrap)
+        self.assertIn("Verify that this file still exists", bootstrap)
+        self.assertIn("must not be shared or committed", bootstrap)
+
 
 if __name__ == "__main__":
     unittest.main()

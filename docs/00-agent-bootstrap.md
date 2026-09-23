@@ -254,7 +254,7 @@ Do not hand off solely because the outer VM exists or an ARM deployment says
 | Area | Required handoff state |
 |---|---|
 | Deployment | Stages through `60` succeeded; asynchronous script executions are terminal with exit `0`; no unresolved installer or configuration operation remains. |
-| Guests | The five intended nested guests exist and are running; Linux boot/access is usable, and the four Windows guests completed native setup and activation. |
+| Guests | The five intended nested guests exist and are running; Linux boot/access is usable, and the four Windows guests completed native setup, activation, and Enhanced Session Mode prerequisites. |
 | Domain | Expected domain, DNS locator records, SYSVOL/NETLOGON and SQL service account; SQL members have healthy secure channels. |
 | SQL | Three SQL Server 2025 Enterprise Developer instances with intended administrative access; both AG engines use the configured domain service identity. |
 | Cluster | Both intended nodes `Up`, correct cluster computer account and configured file-share witness online. |

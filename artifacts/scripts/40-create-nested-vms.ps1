@@ -218,6 +218,19 @@ function Wait-TemplateGeneralization {
     throw "Timed out waiting for Sysprep on $VMName. Inspect C:\Windows\System32\Sysprep\Panther in the guest. No ready marker will be written."
 }
 
+function Enable-WindowsGuestEnhancedSession {
+    $terminalServerPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'
+    Set-ItemProperty -Path $terminalServerPath -Name fDenyTSConnections -Value 0
+    Set-Service -Name TermService -StartupType Automatic
+    Start-Service -Name TermService
+
+    $denyConnections = (Get-ItemProperty -Path $terminalServerPath -Name fDenyTSConnections).fDenyTSConnections
+    $service = Get-Service -Name TermService
+    if ($denyConnections -ne 0 -or $service.Status -ne 'Running') {
+        throw 'Windows guest did not retain the Remote Desktop Services settings required for Hyper-V Enhanced Session Mode.'
+    }
+}
+
 function Get-WindowsServer2022KmsConfiguration {
     $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
     $edition = (Get-WindowsEdition -Online -ErrorAction Stop).Edition
@@ -715,6 +728,7 @@ try {
                 . ([scriptblock]::Create($HelperScript))
                 Enable-WindowsServer2022AzureKms
             }
+            Invoke-WindowsGuest -VMName $definition.Name -ScriptBlock ${function:Enable-WindowsGuestEnhancedSession}
             $restartNeeded = Invoke-WindowsGuest -VMName $definition.Name -ArgumentList $definition.Name -ScriptBlock {
                 param($DesiredName)
                 if ($env:COMPUTERNAME -ne $DesiredName) {

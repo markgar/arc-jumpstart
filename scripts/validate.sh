@@ -61,6 +61,7 @@ if command -v pwsh >/dev/null 2>&1; then
     if ($failed) { exit 1 }
   '
   pwsh -NoLogo -NoProfile -File scripts/test-stage40.ps1
+  pwsh -NoLogo -NoProfile -File scripts/test-stage20.ps1
   pwsh -NoLogo -NoProfile -File scripts/test-stage45.ps1
   pwsh -NoLogo -NoProfile -File scripts/test-stage50.ps1
   pwsh -NoLogo -NoProfile -File scripts/test-stage60.ps1

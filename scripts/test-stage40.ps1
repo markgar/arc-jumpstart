@@ -6,7 +6,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$to
 if ($errors.Count) { throw ($errors.Message -join "`n") }
 
 foreach ($name in @('Repair-TemplateEdgeRegistration', 'Wait-TemplateGeneralization', 'Wait-WindowsGuestOobe',
-    'Get-WindowsServer2022KmsConfiguration', 'New-WindowsServer2022Unattend', 'Invoke-WindowsLicenseCommand',
+    'Enable-WindowsGuestEnhancedSession', 'Get-WindowsServer2022KmsConfiguration', 'New-WindowsServer2022Unattend', 'Invoke-WindowsLicenseCommand',
     'Enable-WindowsServer2022AzureKms', 'Get-WindowsProvisioningHelperScript', 'Get-VhdChainPaths',
     'Get-GeneralizedParentDependents', 'Get-GeneralizedParentCacheState', 'New-GeneralizedParent', 'New-NestedVM')) {
     $definition = $ast.Find({
@@ -14,6 +14,45 @@ foreach ($name in @('Repair-TemplateEdgeRegistration', 'Wait-TemplateGeneralizat
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
     }, $true)
     . ([scriptblock]::Create($definition.Extent.Text))
+}
+
+& {
+    $script:denyConnections = 1
+    $script:serviceStatus = 'Stopped'
+    $script:startupType = $null
+    function Set-ItemProperty {
+        param($Path, $Name, $Value)
+        if ($Path -ne 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -or
+            $Name -ne 'fDenyTSConnections' -or $Value -ne 0) {
+            throw 'Enhanced Session Mode must enable the supported Remote Desktop policy.'
+        }
+        $script:denyConnections = $Value
+    }
+    function Get-ItemProperty {
+        param($Path, $Name)
+        [pscustomobject]@{ fDenyTSConnections = $script:denyConnections }
+    }
+    function Set-Service {
+        param($Name, $StartupType)
+        if ($Name -ne 'TermService') { throw 'Only TermService should be changed.' }
+        $script:startupType = $StartupType
+    }
+    function Start-Service {
+        param($Name)
+        if ($Name -ne 'TermService') { throw 'Only TermService should be started.' }
+        $script:serviceStatus = 'Running'
+    }
+    function Get-Service {
+        param($Name)
+        [pscustomobject]@{ Status = $script:serviceStatus }
+    }
+
+    Enable-WindowsGuestEnhancedSession
+    if ($script:denyConnections -ne 0 -or
+        $script:startupType -ne 'Automatic' -or
+        $script:serviceStatus -ne 'Running') {
+        throw 'Enhanced Session Mode guest prerequisites were not configured.'
+    }
 }
 $runner = $ast.Find({
     param($node)

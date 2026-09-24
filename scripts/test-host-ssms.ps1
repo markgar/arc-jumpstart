@@ -55,20 +55,37 @@ if (-not (Get-SsmsFunction Save-SsmsBootstrapper).Contains('AllowAutoRedirect = 
         return @{ VersionInfo = @{
             OriginalFilename = 'vs_ssms.exe'
             ProductName = 'Microsoft SQL Server Management Studio'
-            ProductMajorPart = 22
+            ProductMajorPart = 18
         } }
     }
-    function Assert-MicrosoftSignature { param([string]$Path) }
+    function Get-AuthenticodeSignature {
+        param([string]$FilePath)
+        return @{ Status = 'Valid'; SignerCertificate = @{ Subject = 'CN=Microsoft, O=Microsoft Corporation, C=US' } }
+    }
     Assert-SsmsBootstrapper 'C:\trusted\vs_SSMS.exe'
     function Get-Item {
         param([string]$LiteralPath)
         return @{ VersionInfo = @{
             OriginalFilename = 'vs_another.exe'
             ProductName = 'Microsoft SQL Server Management Studio'
-            ProductMajorPart = 22
+            ProductMajorPart = 18
         } }
     }
     Assert-Fails { Assert-SsmsBootstrapper 'C:\unrelated\vs_SSMS.exe' } 'Unexpected SSMS 22 bootstrapper identity'
+    function Get-Item {
+        param([string]$LiteralPath)
+        return @{ VersionInfo = @{
+            OriginalFilename = 'vs_ssms.exe'
+            ProductName = 'Unrelated Microsoft installer'
+            ProductMajorPart = 18
+        } }
+    }
+    Assert-Fails { Assert-SsmsBootstrapper 'C:\unrelated\vs_SSMS.exe' } 'Unexpected SSMS 22 bootstrapper identity'
+    function Get-AuthenticodeSignature {
+        param([string]$FilePath)
+        return @{ Status = 'NotSigned'; SignerCertificate = @{ Subject = 'CN=Unknown' } }
+    }
+    Assert-Fails { Assert-SsmsBootstrapper 'C:\unsigned\vs_SSMS.exe' } 'Invalid Microsoft Authenticode signature'
 }
 
 & {

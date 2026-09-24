@@ -15,7 +15,7 @@ function Get-SsmsFunction {
     if (-not $node) { throw "Missing host SSMS function $Name" }
     return $node.Extent.Text
 }
-foreach ($name in @('Assert-MicrosoftSignature', 'Assert-DownloadUri',
+foreach ($name in @('Assert-MicrosoftSignature', 'Assert-SsmsBootstrapper', 'Assert-DownloadUri',
     'Save-SsmsBootstrapper', 'Get-InstalledSsms')) {
     . ([scriptblock]::Create((Get-SsmsFunction $name)))
 }
@@ -39,13 +39,36 @@ Assert-DownloadUri ([uri]'https://aka.ms/ssms/22/release/vs_SSMS.exe')
 Assert-DownloadUri ([uri]'https://download.visualstudio.microsoft.com/download/pr/vs_SSMS.exe')
 
 if (-not (Get-SsmsFunction Save-SsmsBootstrapper).Contains('AllowAutoRedirect = $false') -or
-    -not (Get-SsmsFunction Save-SsmsBootstrapper).Contains('Assert-MicrosoftSignature $partial') -or
+    -not (Get-SsmsFunction Save-SsmsBootstrapper).Contains('Assert-SsmsBootstrapper $partial') -or
     -not (Get-SsmsFunction Save-SsmsBootstrapper).Contains('Move-Item -LiteralPath $partial') -or
+    $source -notmatch 'Start-Process -FilePath \$protectedBootstrapper' -or
     $source -notmatch "'--quiet', '--wait', '--norestart'" -or
     $source -notmatch 'ExitCode -eq 3010' -or
     $source -notmatch 'LastBootTicks' -or
     $source -match 'Restart-Computer|Restart-VM|vm restart') {
     throw 'Host SSMS signature, redirect, synchronous install, or no-restart contract regressed.'
+}
+
+& {
+    function Get-Item {
+        param([string]$LiteralPath)
+        return @{ VersionInfo = @{
+            OriginalFilename = 'vs_ssms.exe'
+            ProductName = 'Microsoft SQL Server Management Studio'
+            ProductMajorPart = 22
+        } }
+    }
+    function Assert-MicrosoftSignature { param([string]$Path) }
+    Assert-SsmsBootstrapper 'C:\trusted\vs_SSMS.exe'
+    function Get-Item {
+        param([string]$LiteralPath)
+        return @{ VersionInfo = @{
+            OriginalFilename = 'vs_another.exe'
+            ProductName = 'Microsoft SQL Server Management Studio'
+            ProductMajorPart = 22
+        } }
+    }
+    Assert-Fails { Assert-SsmsBootstrapper 'C:\unrelated\vs_SSMS.exe' } 'Unexpected SSMS 22 bootstrapper identity'
 }
 
 & {
@@ -90,21 +113,36 @@ if ($entry.Count -ne 1) { throw 'Expected one host SSMS installation entry point
 $install = [scriptblock]::Create($entry[0].Extent.Text)
 & {
     $bootstrapper = 'C:\Users\Public\Desktop\vs_SSMS.exe'
+    $protectedBootstrapper = 'C:\Program Files\ArcJumpstart\SSMS22\vs_SSMS.exe'
     $installPath = 'F:\ArcJumpstart\SSMS22'
     $rebootMarker = 'C:\ArcJumpstart\ssms-reboot-required.json'
     $script:bootstrapper = $bootstrapper
+    $script:protectedBootstrapper = $protectedBootstrapper
     $script:installPath = $installPath
     $script:rebootMarker = $rebootMarker
     $env:SystemDrive = 'C:'
     function Test-Path {
         param([string]$LiteralPath, [string]$PathType)
         if ($LiteralPath -eq 'F:\ArcJumpstart') { return $true }
+        if ($LiteralPath -eq $protectedBootstrapper) { return $script:protectedPresent }
         if ($LiteralPath -eq $bootstrapper) { return $true }
         if ($LiteralPath -eq $rebootMarker) { return $script:rebootPending }
         if ($LiteralPath -eq $installPath) { return $false }
         return $false
     }
-    function Assert-MicrosoftSignature { param([string]$Path) }
+    function Assert-SsmsBootstrapper {
+        param([string]$Path)
+        if ($Path -notin @($protectedBootstrapper, $bootstrapper)) {
+            throw "Unexpected bootstrapper validation path $Path"
+        }
+    }
+    function Save-SsmsBootstrapper { param([string]$Path) throw 'mock network blocked' }
+    function New-Item { param([string]$ItemType, [string]$Path, [switch]$Force) }
+    function Copy-Item { param([string]$LiteralPath, [string]$Destination, [switch]$Force) }
+    function Get-FileHash {
+        param([string]$LiteralPath, [string]$Algorithm)
+        return @{ Hash = 'verified-copy' }
+    }
     function Get-CimInstance {
         param([string]$ClassName, [string]$Filter)
         if ($ClassName -eq 'Win32_OperatingSystem') {
@@ -121,7 +159,7 @@ $install = [scriptblock]::Create($entry[0].Extent.Text)
     function Get-Process { param([string[]]$Name, $ErrorAction) }
     function Start-Process {
         param([string]$FilePath, [string[]]$ArgumentList, [switch]$Wait, [switch]$PassThru)
-        if (-not $Wait -or -not $PassThru -or
+        if ($FilePath -ne $protectedBootstrapper -or -not $Wait -or -not $PassThru -or
             ($ArgumentList -join ' ') -ne '--installPath F:\ArcJumpstart\SSMS22 --quiet --wait --norestart') {
             throw 'SSMS installation did not use the supported synchronous arguments.'
         }
@@ -130,6 +168,10 @@ $install = [scriptblock]::Create($entry[0].Extent.Text)
     function Stop-Transcript {}
     function Set-Content { param([string]$LiteralPath, [string]$Encoding, [Parameter(ValueFromPipeline)]$Value) process {} }
     function Remove-Item { param([string]$LiteralPath, [switch]$Force) }
+    $script:protectedPresent = $false
+    try { & $install; throw 'Untrusted Public Desktop bootstrapper was executed.' }
+    catch { if ($_.Exception.Message -notlike '*download failed; no installer was executed*mock network blocked*') { throw } }
+    $script:protectedPresent = $true
     $script:rebootPending = $true
     $script:verifiedSsms = 'F:\ArcJumpstart\SSMS22\Common7\IDE\Ssms.exe'
     if (-not (Test-Path -LiteralPath $rebootMarker)) { throw 'Mock reboot marker was not visible.' }
@@ -147,7 +189,7 @@ $install = [scriptblock]::Create($entry[0].Extent.Text)
     $script:setupExitCode = 5003
     try { & $install; throw 'Installer failure was ignored.' }
     catch { if ($_.Exception.Message -notlike '*SSMS setup failed (exit 5003)*') { throw } }
-    Remove-Variable rebootPending, verifiedSsms, setupExitCode, bootstrapper, installPath, rebootMarker -Scope Script
+    Remove-Variable protectedPresent, rebootPending, verifiedSsms, setupExitCode, bootstrapper, protectedBootstrapper, installPath, rebootMarker -Scope Script
 }
 
 $bicep = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../infra/stages/ssms/main.bicep') -Raw

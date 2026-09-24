@@ -124,7 +124,9 @@ with their own Azure identity.
 On new `deploy.ps1 all` builds, the independent `ssms` step runs **after**
 numbered stage `60`. It stages Microsoft's signed SSMS 22 bootstrapper at
 `C:\Users\Public\Desktop\vs_SSMS.exe`, then installs the minimal SSMS product
-for all host users on the persistent `F:\ArcJumpstart\SSMS22` volume. This
+for all host users on the persistent `F:\ArcJumpstart\SSMS22` volume. Setup
+executes only the verified copy under protected Program Files, never a
+pre-existing executable on the Public Desktop. This
 noninteractive install accepts Microsoft's SSMS terms, uses
 `--quiet --wait --norestart`, and requires internet access to Microsoft's
 installer/package endpoints plus at least 20 GiB free on both C: and F:.

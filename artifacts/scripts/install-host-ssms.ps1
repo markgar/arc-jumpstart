@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 $bootstrapperUrl = 'https://aka.ms/ssms/22/release/vs_SSMS.exe'
 $desktop = Join-Path $env:PUBLIC 'Desktop'
 $bootstrapper = Join-Path $desktop 'vs_SSMS.exe'
+$protectedBootstrapper = Join-Path $env:ProgramFiles 'ArcJumpstart\SSMS22\vs_SSMS.exe'
 $installPath = 'F:\ArcJumpstart\SSMS22'
 $logRoot = 'C:\ArcJumpstart\Logs'
 $rebootMarker = 'C:\ArcJumpstart\ssms-reboot-required.json'
@@ -15,6 +16,17 @@ function Assert-MicrosoftSignature {
     if ($signature.Status -ne 'Valid' -or
         $signature.SignerCertificate.Subject -notmatch '(^|, )O=Microsoft Corporation(,|$)') {
         throw "Invalid Microsoft Authenticode signature: $Path"
+    }
+}
+
+function Assert-SsmsBootstrapper {
+    param([string]$Path)
+    Assert-MicrosoftSignature $Path
+    $version = (Get-Item -LiteralPath $Path).VersionInfo
+    if ($version.OriginalFilename -ine 'vs_ssms.exe' -or
+        $version.ProductName -ne 'Microsoft SQL Server Management Studio' -or
+        $version.ProductMajorPart -ne 22) {
+        throw "Unexpected SSMS 22 bootstrapper identity: $Path"
     }
 }
 
@@ -71,7 +83,7 @@ function Save-SsmsBootstrapper {
                     $received -ne $response.ContentLength)) {
                     throw 'SSMS bootstrapper download is incomplete.'
                 }
-                Assert-MicrosoftSignature $partial
+                Assert-SsmsBootstrapper $partial
                 Move-Item -LiteralPath $partial -Destination $Path -Force
                 return
             }
@@ -111,14 +123,23 @@ try {
     if (-not (Test-Path -LiteralPath 'F:\ArcJumpstart' -PathType Container)) {
         throw 'Persistent host data volume F:\ArcJumpstart is unavailable; run stage 10 first.'
     }
-    if (Test-Path -LiteralPath $bootstrapper) {
-        Assert-MicrosoftSignature $bootstrapper
-        Write-Host 'Verified existing Microsoft-signed SSMS 22 bootstrapper on Public Desktop.'
+    if (Test-Path -LiteralPath $protectedBootstrapper) {
+        Assert-SsmsBootstrapper $protectedBootstrapper
+        Write-Host 'Verified cached SSMS 22 bootstrapper in protected Program Files.'
     }
     else {
-        Write-Host 'Downloading SSMS 22 bootstrapper to host Public Desktop.'
-        Save-SsmsBootstrapper $bootstrapper
+        Write-Host 'Downloading SSMS 22 bootstrapper to protected Program Files.'
+        New-Item -ItemType Directory -Path (Split-Path -Parent $protectedBootstrapper) -Force | Out-Null
+        try { Save-SsmsBootstrapper $protectedBootstrapper }
+        catch { throw "Official SSMS 22 bootstrapper download failed; no installer was executed: $($_.Exception.Message)" }
     }
+    Copy-Item -LiteralPath $protectedBootstrapper -Destination $bootstrapper -Force
+    Assert-SsmsBootstrapper $bootstrapper
+    if ((Get-FileHash -LiteralPath $bootstrapper -Algorithm SHA256).Hash -ne
+        (Get-FileHash -LiteralPath $protectedBootstrapper -Algorithm SHA256).Hash) {
+        throw 'Public Desktop SSMS bootstrapper differs from the verified protected copy.'
+    }
+    Write-Host 'Verified SSMS 22 bootstrapper staged on host Public Desktop.'
 
     if (Test-Path -LiteralPath $rebootMarker) {
         $previousBoot = (Get-Content -LiteralPath $rebootMarker -Raw | ConvertFrom-Json).LastBootTicks
@@ -146,7 +167,7 @@ try {
         throw 'SSMS installation needs at least 20 GiB free on both the system drive (shared components/cache) and F: (product). Bootstrapper remains on Public Desktop.'
     }
     Write-Host "Installing minimal SSMS 22 for all host users at $installPath. No host restart will be initiated."
-    $process = Start-Process -FilePath $bootstrapper -ArgumentList @(
+    $process = Start-Process -FilePath $protectedBootstrapper -ArgumentList @(
         '--installPath', $installPath, '--quiet', '--wait', '--norestart'
     ) -Wait -PassThru
     if ($process.ExitCode -eq 3010) {

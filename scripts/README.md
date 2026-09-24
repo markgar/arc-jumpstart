@@ -17,7 +17,7 @@ inputs and required ready-environment outcome.
 | `./scripts/validate.ps1` | Compiles Bicep and runs PowerShell source and stage regressions. No Azure resources are created. |
 | `./scripts/preflight.ps1 infra` / `full` | Checks Azure registrations, host SKU and media reachability. Does not create resources or register providers. |
 | `./scripts/deploy.ps1 all` / `20-30` / `<stage>` | Deploys all stages or a scoped recovery stage with predecessor and Run Command gates. |
-| `./scripts/deploy.ps1 bastion` / `auto-shutdown` / `arc-launchers` | Independent access, shutdown and interactive Arc-launcher setup. |
+| `./scripts/deploy.ps1 bastion` / `auto-shutdown` / `arc-launchers` / `ssms` | Independent access, shutdown, interactive Arc-launcher setup and host-only SSMS 22 installation. |
 | `./scripts/lab.ps1 build-status` / `stage-progress 40` / `stage-log 40` | One-shot redacted stage views; live views never start a competing VM command. |
 | `./scripts/lab.ps1 status` / `start` / `stop` / `inventory` / `delete-infra <RG>` | Host power, modeling export and explicitly confirmed infrastructure cleanup. |
 | `./scripts/check-sql-media.ps1` | Optional local HTTPS media download and length/structure/SHA-256 verification; stage `45` has its own checks. |
@@ -85,6 +85,16 @@ connect Arc; it only places the clickable helper and approved non-secret Azure
 target identifiers on the guest desktops. `ARC_RESOURCE_GROUP` defaults to
 `<AZURE_RESOURCE_GROUP>-arc`, and `ARC_LOCATION` defaults to
 `AZURE_LOCATION`; either can be overridden.
+
+`all` also runs the independent host-only `ssms` step after stage `60`, before
+Arc launchers. It stages a Microsoft-signed bootstrapper on the host Public
+Desktop and installs minimal SSMS 22 for all host users, without a host restart.
+Set `INSTALL_HOST_SSMS=false` to omit it from new builds. The explicit
+`./scripts/deploy.ps1 ssms` command recovers this step on an existing host
+without touching numbered stages or the guests. `all` reports an SSMS failure
+after the core stages instead of hiding it, but still attempts Arc launcher
+staging. Use `./scripts/lab.ps1 stage-log ssms` after the command becomes
+terminal. See [host-only SSMS](../docs/02-deploy.md#host-only-ssms-22).
 
 ## Live progress from the host
 
@@ -164,7 +174,7 @@ and [cleanup guide](../docs/06-troubleshooting-cleanup.md).
 
 ## Regression coverage
 
-`validate.ps1` compiles Bicep and runs the PowerShell runtime, stage-view,
+`validate.ps1` compiles Bicep and runs the PowerShell runtime, host-SSMS, stage-view,
 lab-runtime, repository-documentation, Arc-launcher, media-checker and guest-stage regressions.
 Stage `45` verifies its SQL media in the guest installation workflow.
 

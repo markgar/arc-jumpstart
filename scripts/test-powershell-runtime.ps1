@@ -1,7 +1,8 @@
 param([switch]$NetworkFailure, [switch]$ImageFailure,
     [switch]$BastionFailure, [switch]$BastionOnly,
     [switch]$DisableBastion, [switch]$DisableLaunchers,
-    [switch]$ShutdownOnly, [switch]$MissingShutdown)
+    [switch]$ShutdownOnly, [switch]$MissingShutdown,
+    [switch]$SsmsOnly, [switch]$DisableSsms, [switch]$SsmsFailure)
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lab-runtime.ps1')
@@ -42,6 +43,7 @@ try {
     }
     if ($DisableBastion) { $config += 'DEPLOY_BASTION=false' }
     if ($DisableLaunchers) { $config += 'PREPARE_ARC_LAUNCHERS=false' }
+    if ($DisableSsms) { $config += 'INSTALL_HOST_SSMS=false' }
     if ($MissingShutdown) {
         $config = @($config | Where-Object { $_ -notmatch '^AUTO_SHUTDOWN_ENABLED=' })
     }
@@ -134,8 +136,13 @@ try {
             }
             'vm run-command show' {
                 $generation = @($global:LabTestDeployed | Where-Object {
-                    $_ -eq 'arc-jumpstart-30-images' -or $_ -eq 'arc-jumpstart-45-sql-install'
+                    $_ -in @('arc-jumpstart-30-images', 'arc-jumpstart-45-sql-install',
+                        'arc-jumpstart-ssms')
                 }).Count
+                if ($SsmsFailure -and $name -eq 'stage-ssms' -and
+                    $global:LabTestDeployed -contains 'arc-jumpstart-ssms') {
+                    return "Failed|1|$generation"
+                }
                 if ($ImageFailure -and $name -eq 'stage30-images' -and $generation -gt 0) {
                     return "Failed|1|$generation"
                 }
@@ -151,11 +158,12 @@ try {
             default { return '' }
         }
     }
-    if ($BastionOnly -or $ShutdownOnly) {
-        $stage = if ($BastionOnly) { 'bastion' } else { 'auto-shutdown' }
+    if ($BastionOnly -or $ShutdownOnly -or $SsmsOnly) {
+        $stage = if ($BastionOnly) { 'bastion' } elseif ($SsmsOnly) { 'ssms' } else { 'auto-shutdown' }
         & (Join-Path $PSScriptRoot 'deploy.ps1') -Stage $stage
         if ($BastionFailure) { throw 'Failed Bastion submission unexpectedly succeeded.' }
-        $expectedOnly = if ($BastionOnly) { 'arc-jumpstart-bastion' } else { 'arc-jumpstart-auto-shutdown' }
+        $expectedOnly = if ($BastionOnly) { 'arc-jumpstart-bastion' }
+            elseif ($SsmsOnly) { 'arc-jumpstart-ssms' } else { 'arc-jumpstart-auto-shutdown' }
         if (@($global:LabTestDeployed).Count -ne 1 -or $global:LabTestDeployed[0] -ne $expectedOnly) {
             throw 'Independent action replayed numbered infrastructure stages.'
         }
@@ -169,9 +177,11 @@ try {
         'arc-jumpstart-30-images', 'arc-jumpstart-20-host-network',
         'arc-jumpstart-40-nested-vms', 'arc-jumpstart-45-sql-install',
         'arc-jumpstart-50-domain', 'arc-jumpstart-60-sql-ag',
+        'arc-jumpstart-ssms',
         'arc-jumpstart-arc-launchers')
     if ($DisableBastion) { $expected = @($expected | Where-Object { $_ -ne 'arc-jumpstart-bastion' }) }
     if ($DisableLaunchers) { $expected = @($expected | Where-Object { $_ -ne 'arc-jumpstart-arc-launchers' }) }
+    if ($DisableSsms) { $expected = @($expected | Where-Object { $_ -ne 'arc-jumpstart-ssms' }) }
     if ($names.Count -ne $expected.Count) {
         throw "Expected $($expected.Count) deployments, got $($names.Count)."
     }
@@ -193,7 +203,7 @@ try {
     if (@($global:LabTestCalls | Where-Object { ($_ -join ' ') -match 'FakeOnly-123!' }).Count) {
         throw 'A password appeared on the Azure CLI command line.'
     }
-    if ($BastionFailure -or $DisableBastion -or $DisableLaunchers) { return }
+    if ($BastionFailure -or $DisableBastion -or $DisableLaunchers -or $DisableSsms -or $SsmsFailure) { return }
     $failed = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath -NetworkFailure 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0 -or $failed -match '==> Stage 40:' -or
         $failed -notmatch 'Stage 30 may outlive this wrapper') {
@@ -205,13 +215,22 @@ try {
         throw 'Image failure did not prevent stage 40.'
     }
     foreach ($mode in @('-BastionFailure', '-DisableBastion', '-DisableLaunchers',
-        '-BastionOnly', '-ShutdownOnly')) {
+        '-DisableSsms', '-BastionOnly', '-ShutdownOnly', '-SsmsOnly')) {
         $result = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath $mode 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0) { throw "$mode regression failed: $result" }
     }
     $failed = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath -BastionOnly -BastionFailure 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0 -or $failed -notmatch 'Bastion submission failed') {
         throw 'On-demand Bastion failure did not propagate.'
+    }
+    $failed = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath -SsmsOnly -SsmsFailure 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $failed -notmatch 'stage-ssms ended in state Failed') {
+        throw 'On-demand SSMS installation failure did not propagate.'
+    }
+    $failed = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath -SsmsFailure 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $failed -notmatch 'Numbered stages finished' -or
+        $failed -notmatch '==> Arc launchers:') {
+        throw 'Optional SSMS failure was hidden or prevented independent Arc launcher staging.'
     }
     $failed = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath -MissingShutdown 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0 -or $failed -notmatch 'AUTO_SHUTDOWN_ENABLED must be set') {

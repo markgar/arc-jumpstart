@@ -2,13 +2,13 @@ $labCommands = @{
     '10' = 'stage10-init-host'; '20' = 'stage20-host-network'
     '30' = 'stage30-images'; '40' = 'stage40-nested-vms'
     '45' = 'stage45-sql-install'; '50' = 'stage50-domain'
-    '60' = 'stage60-sql-ag'
+    '60' = 'stage60-sql-ag'; 'ssms' = 'stage-ssms'
 }
 $labLogs = @{
     '10' = '10-init-host'; '20' = '20-host-network'
     '30' = '30-download-images'; '40' = '40-create-nested-vms'
     '45' = '45-install-sql'; '50' = '50-configure-domain'
-    '60' = '60-configure-sql-ag'
+    '60' = '60-configure-sql-ag'; 'ssms' = 'install-host-ssms'
 }
 
 function Get-LabProperty {
@@ -111,7 +111,7 @@ function Show-LabStage {
     param([string]$Command, [string]$Number, [hashtable]$Settings)
     Assert-LabSettings $Settings @('AZURE_SUBSCRIPTION_ID', 'AZURE_RESOURCE_GROUP', 'NAME_PREFIX')
     if ($Command -ne 'build-status' -and -not $labCommands.ContainsKey($Number)) {
-        throw 'Stage must be one of 10, 20, 30, 40, 45, 50 or 60.'
+        throw 'Stage must be one of 10, 20, 30, 40, 45, 50, 60 or ssms.'
     }
     Write-Warning 'Display redaction only: stored host transcripts remain sensitive and unchanged.'
     [void](Invoke-LabAz @('account', 'set', '--subscription', $Settings.AZURE_SUBSCRIPTION_ID))

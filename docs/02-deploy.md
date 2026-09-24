@@ -119,6 +119,44 @@ connect Azure Arc or the Azure extension for SQL Server. After the agent stages
 the launchers, the user completes [interactive Arc setup](03-arc-onboarding.md)
 with their own Azure identity.
 
+### Host-only SSMS 22
+
+On new `deploy.ps1 all` builds, the independent `ssms` step runs **after**
+numbered stage `60`. It stages Microsoft's signed SSMS 22 bootstrapper at
+`C:\Users\Public\Desktop\vs_SSMS.exe`, then installs the minimal SSMS product
+for all host users on the persistent `F:\ArcJumpstart\SSMS22` volume. This
+noninteractive install accepts Microsoft's SSMS terms, uses
+`--quiet --wait --norestart`, and requires internet access to Microsoft's
+installer/package endpoints plus at least 20 GiB free on both C: and F:.
+No credentials or user-specific SSMS settings are installed, and the host is
+never restarted by this step. An existing verified SSMS 22 is retained.
+`INSTALL_HOST_SSMS=false` in the private `ENV_FILE` opts out of the default;
+the explicit command below runs regardless of that setting.
+
+The SSMS step is not a predecessor to any guest, Arc, or SQL readiness gate.
+If it fails after the core stages, `all` reports an error instead of claiming
+complete setup; the numbered stages remain intact. Arc launcher staging is
+still attempted independently. The signed bootstrapper stays on Public Desktop
+even when installer package retrieval or setup fails. To recover an existing
+lab or retry **only** host SSMS (never rerun `all` after domain promotion):
+
+```powershell
+./scripts/deploy.ps1 ssms
+./scripts/lab.ps1 stage-progress ssms
+# After the run command is terminal:
+./scripts/lab.ps1 stage-log ssms
+```
+
+Wait for an earlier SSMS Run Command or Visual Studio installation to finish
+before retrying. A failure due to a partial product installation needs
+diagnosis from Visual Studio Installer logs rather than an automatic repair.
+Exit `3010` means a host reboot is required before using SSMS; do not reboot
+while guests or another operation are active. Arrange a scoped host restart,
+then rerun `deploy.ps1 ssms` to verify the installed executable. The bootstrapper
+is a web installer, not offline installation media; if package downloads are
+blocked, [Microsoft's offline layout procedure](https://learn.microsoft.com/en-us/ssms/install/create-offline)
+is a separate operator action.
+
 For stage `50`, read the [automated domain-controller runbook](02-domain-controller.md).
 It explains the AD/DNS bootstrap sequence, credentials, service account,
 domain joins, live diagnostics, verification criteria and safe retry boundaries.
@@ -252,13 +290,15 @@ than by guest name:
 
 Stage `50` enables TCP `1433` on all three SQL guests only from
 `192.168.128.0/24` and verifies the port from the host. It grants
-`JUMPSTART\Domain Admins` SQL sysadmin. Because the host itself has no domain
-logon token, launch SSMS with network-only domain credentials:
+`JUMPSTART\Domain Admins` SQL sysadmin. Because the host itself has no domain logon token, launch SSMS with network-only
+domain credentials from the host desktop. For the default installation:
 
 ```powershell
-$ssms = Get-ChildItem "$env:ProgramFiles\Microsoft SQL Server Management Studio*" `
-  -Filter Ssms.exe -Recurse -ErrorAction Stop |
-  Select-Object -First 1 -ExpandProperty FullName
+$ssms = 'F:\ArcJumpstart\SSMS22\Common7\IDE\Ssms.exe'
+if (-not (Test-Path -LiteralPath $ssms)) {
+  $ssms = Join-Path $env:ProgramFiles 'Microsoft SQL Server Management Studio 22\Common7\IDE\Ssms.exe'
+}
+if (-not (Test-Path -LiteralPath $ssms)) { throw 'SSMS 22 is not installed on the host.' }
 runas.exe /netonly /user:JUMPSTART\Administrator "`"$ssms`""
 ```
 

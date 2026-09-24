@@ -29,7 +29,7 @@ try {
             throw "PowerShell parsing failed: $($file.Name)."
         }
     }
-    foreach ($test in @('test-powershell-runtime.ps1', 'test-stage-view.ps1',
+    foreach ($test in @('test-powershell-runtime.ps1', 'test-host-ssms.ps1', 'test-stage-view.ps1',
         'test-lab-runtime.ps1', 'test-repository.ps1', 'test-check-sql-media.ps1',
         'test-stage20.ps1', 'test-stage40.ps1', 'test-stage45.ps1',
         'test-stage50.ps1', 'test-stage60.ps1')) {

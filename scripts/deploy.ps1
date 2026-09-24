@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory, Position = 0)]
     [ValidateSet('00', '10', '20', '30', '40', '45', '50', '60',
-        '20-30', 'all', 'bastion', 'auto-shutdown', 'arc-launchers')]
+        '20-30', 'all', 'bastion', 'auto-shutdown', 'arc-launchers', 'ssms')]
     [string]$Stage
 )
 
@@ -201,6 +201,19 @@ function Invoke-ArcLaunchers {
     }
 }
 
+function Invoke-HostSsms {
+    Assert-Deployment '10'
+    $previousStart = (Get-RunStatus 'stage-ssms').Split('|')
+    $start = if ($previousStart.Count -ge 3) { $previousStart[2] } else { '' }
+    Write-Host '==> Optional host SSMS 22: signed bootstrapper and minimal installation'
+    Invoke-Deployment 'arc-jumpstart-ssms' 'ssms' @{
+        location = $settings.AZURE_LOCATION; namePrefix = $settings.NAME_PREFIX
+        runId = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
+    }
+    Write-Host 'Waiting for the independent SSMS host installation to finish...'
+    Wait-RunCommand 'stage-ssms' $start
+}
+
 function Invoke-Stage {
     param([string]$Number, [switch]$Defer)
     $previousStart = ''
@@ -279,7 +292,7 @@ try {
     $settings = Read-LabSettings (Get-LabEnvironmentFile $repoRoot)
     Assert-LabSettings $settings @('AZURE_SUBSCRIPTION_ID', 'AZURE_LOCATION',
         'AZURE_RESOURCE_GROUP', 'NAME_PREFIX')
-    if ($Stage -notin @('bastion', 'auto-shutdown')) {
+    if ($Stage -notin @('bastion', 'auto-shutdown', 'ssms')) {
         Assert-LabSettings $settings @('HOST_ADMIN_USERNAME', 'HOST_ADMIN_PASSWORD',
             'NESTED_WINDOWS_PASSWORD', 'SAFE_MODE_PASSWORD', 'SQL_SERVICE_ACCOUNT_PASSWORD')
         foreach ($key in @('HOST_ADMIN_PASSWORD', 'SAFE_MODE_PASSWORD', 'SQL_SERVICE_ACCOUNT_PASSWORD')) {
@@ -308,7 +321,7 @@ try {
             throw 'ARC_RESOURCE_GROUP and ARC_LOCATION must be valid for arc-launchers.'
         }
     }
-    foreach ($option in @('PREPARE_ARC_LAUNCHERS', 'DEPLOY_BASTION')) {
+    foreach ($option in @('PREPARE_ARC_LAUNCHERS', 'DEPLOY_BASTION', 'INSTALL_HOST_SSMS')) {
         if ($settings[$option]) { Assert-Choice $option }
     }
     $env:AZURE_CORE_ONLY_SHOW_ERRORS = 'true'
@@ -328,6 +341,7 @@ try {
     }
     if ($Stage -eq 'auto-shutdown') { Invoke-AutoShutdown; exit 0 }
     if ($Stage -eq 'arc-launchers') { Invoke-ArcLaunchers; exit 0 }
+    if ($Stage -eq 'ssms') { Invoke-HostSsms; exit 0 }
 
     $numbers = if ($Stage -eq 'all') { @('00', '10', '20', '30', '40', '45', '50', '60') }
         elseif ($Stage -eq '20-30') { @('20', '30') } else { @($Stage) }
@@ -366,8 +380,25 @@ try {
         }
     }
     if ($bastionNotice) { Write-Host $bastionNotice }
-    if ($Stage -eq 'all' -and (Get-Setting 'PREPARE_ARC_LAUNCHERS' 'true') -eq 'true') {
-        Invoke-ArcLaunchers
+    if ($Stage -eq 'all') {
+        $optionalFailures = @()
+        if ((Get-Setting 'INSTALL_HOST_SSMS' 'true') -eq 'true') {
+            try { Invoke-HostSsms }
+            catch {
+                $optionalFailures += "Host SSMS: $($_.Exception.Message)"
+                Write-Warning "Host SSMS failed independently: $($_.Exception.Message)"
+            }
+        }
+        if ((Get-Setting 'PREPARE_ARC_LAUNCHERS' 'true') -eq 'true') {
+            try { Invoke-ArcLaunchers }
+            catch {
+                $optionalFailures += "Arc launchers: $($_.Exception.Message)"
+                Write-Warning "Arc launchers failed independently: $($_.Exception.Message)"
+            }
+        }
+        if ($optionalFailures.Count) {
+            throw "Numbered stages finished, but optional host setup failed: $($optionalFailures -join '; '). Retry only the failed independent step."
+        }
     }
 }
 catch {

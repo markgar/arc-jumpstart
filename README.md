@@ -58,7 +58,10 @@ flowchart LR
 
 The agent prepares the domain, three SQL Server 2025 Enterprise Developer
 instances, sample databases, WSFC, availability group, listener, Arc resource
-group, and desktop launchers. The user then opens the launcher and authenticates
+group, host-only SSMS 22 and desktop launchers. SSMS installation runs
+independently after the numbered stages by default; on an existing host, use
+`./scripts/deploy.ps1 ssms` to install or verify it without replaying `all`.
+The user then opens the launcher and authenticates
 with their own Azure identity. The workshop starts after Arc inventory is ready:
 perform or reuse an assessment, export modeling data, and migrate
 `JumpstartStandaloneDB` to a small SQL managed instance.

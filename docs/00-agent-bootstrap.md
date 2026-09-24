@@ -121,6 +121,12 @@ leave submitted operations and resources intact; the lab remains billable.
 
 For a second deployment, use a separately approved target and configuration.
 Do not silently reset or overwrite the existing practice lab.
+If the previous lab was fully deleted and the operator approves rebuilding the
+same target, its existing private `ENV_FILE` and credentials may be reused
+without running `init-config.ps1` again. Verify the target resource groups are
+absent before starting a fresh `all`. This is different from a concurrent
+second lab, which needs a distinct approved resource group and private file.
+Neither case permits replaying `all` to repair a still-promoted domain.
 
 ## Default: run the saved automation
 

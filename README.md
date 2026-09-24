@@ -96,6 +96,12 @@ The command prints the absolute path without showing its contents and never
 overwrites an existing file. Edit that file to replace every `CHANGEME`.
 Set `$env:ENV_FILE` to its absolute path before running the remaining commands;
 the same path must be used for all of them.
+If you have deleted a previous lab and are rebuilding the same approved target,
+you may reuse its existing private file and credentials after verifying that
+the old resources are gone. Do not rerun `all` to repair a still-promoted
+domain. For a second lab alongside the first, use a distinct private file and
+resource group; `init-config.ps1` accepts an absolute `ENV_FILE` path and
+never overwrites it.
 
 | Credential | Setting |
 |---|---|

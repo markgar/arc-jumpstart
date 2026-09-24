@@ -72,31 +72,27 @@ before deployment.
 
 - An Azure subscription and interactive Azure CLI user with the permissions in
   [`docs/01-prerequisites.md`](docs/01-prerequisites.md).
-- macOS, Linux, or WSL2 on Windows.
-- Azure CLI with Bicep, Python 3, Git, and normal POSIX tools.
+- PowerShell 7 and Azure CLI (including `az bicep install`) on Windows, macOS,
+  or Linux. WSL2 is not required.
 - A private configuration file outside the repository.
 
-Native Windows and Git Bash may run source validation, but full deployment and
-lab management require WSL2. See the
-[Windows setup and no-WSL options](docs/01-prerequisites.md#windows-required-wsl2-setup).
+Run the PowerShell entry points from this checkout on Windows, macOS or Linux.
+See the [workstation prerequisites](docs/01-prerequisites.md#workstation).
 
 ## Configure and build
 
-Create the private environment file in the visible `ArcJumpstart` folder in your
-home directory, outside the repository. This example works on macOS, Linux, and
-inside WSL2:
+From a PowerShell 7 terminal in the repository root, create a private
+configuration template in the visible `ArcJumpstart` folder in your home
+directory, outside the repository:
 
-```bash
-ENV_FILE="$HOME/ArcJumpstart/lab.env"
-mkdir -p -m 700 "$(dirname "$ENV_FILE")"
-if [[ ! -f "$ENV_FILE" ]]; then
-  install -m 600 deploy.env.example "$ENV_FILE"
-fi
-${EDITOR:-vi} "$ENV_FILE"
+```powershell
+./scripts/init-config.ps1
 ```
 
-Replace every `CHANGEME`. The file name is not important; `ENV_FILE` is the
-exact path used by every command.
+The command prints the absolute path without showing its contents and never
+overwrites an existing file. Edit that file to replace every `CHANGEME`.
+Set `$env:ENV_FILE` to its absolute path before running the remaining commands;
+the same path must be used for all of them.
 
 | Credential | Setting |
 |---|---|
@@ -110,18 +106,19 @@ do not commit the file or recover secrets from deployment logs.
 
 Run:
 
-```bash
+```powershell
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
 az login
-./scripts/validate.sh &&
-ENV_FILE="$ENV_FILE" ./scripts/preflight.sh infra &&
-ENV_FILE="$ENV_FILE" ./scripts/deploy.sh all
+./scripts/validate.ps1
+./scripts/preflight.ps1 infra
+./scripts/deploy.ps1 all
 ```
 
-Keep deployment running in its own terminal. Request one status snapshot when
-needed:
+Only start each command after the preceding one succeeds. Keep deployment
+running in its own terminal; request one status snapshot when needed:
 
-```bash
-ENV_FILE="$ENV_FILE" ./scripts/lab.sh build-status
+```powershell
+./scripts/lab.ps1 build-status
 ```
 
 Do not start a second deployment because the first terminal is quiet. For
@@ -140,6 +137,7 @@ for finding and opening your file. Do not share or commit its contents.
 | Platform | Usual full path (replace the example username) | Find and view the file |
 |---|---|---|
 | macOS | `/Users/alex/ArcJumpstart/lab.env` | In Finder, choose **Go > Home**, then open **ArcJumpstart**. Right-click `lab.env` and choose **Open With > TextEdit** to view it. |
+| Windows native PowerShell | `C:\Users\alex\ArcJumpstart\lab.env` | Paste `C:\Users\alex\ArcJumpstart` into File Explorer's address bar, then open `lab.env` with Notepad. Use the actual path printed by `init-config.ps1`. |
 | Windows with WSL2 | `/home/alex/ArcJumpstart/lab.env` inside WSL; `\\wsl.localhost\Ubuntu\home\alex\ArcJumpstart\lab.env` in Windows for an Ubuntu distro | Paste the folder path `\\wsl.localhost\Ubuntu\home\alex\ArcJumpstart` into File Explorer's address bar and press Enter. Right-click `lab.env` and open it with Notepad to view it. Use the actual distro and username supplied by the agent. |
 | Linux | `/home/alex/ArcJumpstart/lab.env` | Open **Home > ArcJumpstart** in your file manager and open `lab.env` in a text editor. |
 
@@ -147,7 +145,8 @@ These are examples, not a way to locate an existing lab automatically. If you
 already use a different `ENV_FILE`, keep using that exact file; do not overwrite
 or silently move it. The agent must report its actual location instead. On
 macOS, **Finder > Go > Go to Folder** also accepts the full containing folder
-path. On Windows, edit the file inside WSL and retain owner-only permissions.
+path. For native Windows PowerShell, `init-config.ps1` restricts the folder and
+file to your account; for WSL, edit the file inside WSL and retain mode `600`.
 If deployment runs on a remote execution host, the file is on that host, not
 necessarily your laptop; the handoff must identify the host and how to access it.
 

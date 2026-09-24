@@ -92,8 +92,9 @@ relationships:
 
 Run the supported export after the assessment and Arc inventory are current:
 
-```bash
-ENV_FILE=/absolute/private/path/lab.env ./scripts/lab.sh inventory
+```powershell
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+./scripts/lab.ps1 inventory
 ```
 
 The command limits the query to the configured subscription and Arc resource

@@ -36,14 +36,11 @@ that service-principal-based unattended authentication has been implemented.
 Missing credentials, permissions, quota or approval are real prerequisites,
 not reasons to bypass safeguards.
 
-Before collecting deployment inputs on Windows, establish the execution
-runtime. `uname -s` must report Linux from WSL2, not `MINGW`, `MSYS` or
-`CYGWIN`. Confirm with the operator that WSL2 and its required Windows features
-are approved. Azure CLI, Python and the repository must be installed inside
-that WSL distribution; do not silently combine Git Bash or Windows-native
-executables with Linux paths. If WSL2 is unavailable, stop after source
-validation and direct the operator to an approved Linux/macOS workstation or
-Linux development VM. See [Windows prerequisites](01-prerequisites.md#windows-required-wsl2-setup).
+Before collecting deployment inputs, establish the execution runtime. The
+cross-platform path uses PowerShell 7 and Azure CLI in the same host OS
+(Windows, macOS or Linux); WSL2 is not required. Run the
+PowerShell entry points from this repository checkout on the same host OS
+as Azure CLI. See [workstation prerequisites](01-prerequisites.md#workstation).
 
 Once those inputs are approved, use documented defaults and proceed without
 repeated routine confirmation questions. See the
@@ -70,7 +67,7 @@ non-safety setting:
 | Nested Windows password | The documented source-image password, unless the image source is overridden |
 | Auto-shutdown | Ask whether to enable it, and if enabled ask for the daily time and time zone; never infer consent from repository defaults |
 | Arc desktop launchers | Stage on all Windows guests by default; they remain inert until the user opens one and authenticates. Allow `PREPARE_ARC_LAUNCHERS=false` as an override |
-| Execution | Validation, infrastructure preflight and `deploy.sh all` in a separate terminal or asynchronous process |
+| Execution | Validation, infrastructure preflight and `deploy.ps1 all` in a separate terminal or asynchronous process |
 | User boundary | Stop after staging launchers; do not connect Arc, run assessment or migrate data |
 
 The agent still requires explicit approval for the Azure subscription and
@@ -89,17 +86,14 @@ reason to present the specific blocked decision, not to restart the entire
 questionnaire.
 
 Keep the configuration in approved durable, owner-only storage outside the
-repository. For new labs on macOS, Linux, and WSL2, use the visible
+repository. For new labs on Windows, macOS, Linux, and WSL2, use the visible
 `$HOME/ArcJumpstart/lab.env` location. Do not create configuration in hidden
 folders. Preserve an existing lab's exact `ENV_FILE`; do not silently move or
 overwrite it. A user-approved alternative for a new lab must also be visible.
 
-```bash
-ENV_FILE="$HOME/ArcJumpstart/lab.env"
-mkdir -p -m 700 "$(dirname "$ENV_FILE")"
-if [[ ! -f "$ENV_FILE" ]]; then
-  install -m 600 deploy.env.example "$ENV_FILE"
-fi
+```powershell
+./scripts/init-config.ps1
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
 ```
 
 Populate it without displaying secret values. It contains literal `KEY=value`
@@ -132,13 +126,14 @@ Do not silently reset or overwrite the existing practice lab.
 
 From the repository root, after configuration and Azure authentication:
 
-```bash
-./scripts/validate.sh &&
-ENV_FILE=/absolute/private/path/lab.env ./scripts/preflight.sh infra &&
-ENV_FILE=/absolute/private/path/lab.env ./scripts/deploy.sh all
+```powershell
+./scripts/validate.ps1
+./scripts/preflight.ps1 infra
+./scripts/deploy.ps1 all
 ```
 
-The `&&` chain prevents deployment after failed source validation or preflight.
+Only start the next command after the prior one succeeds; do not run deployment
+after failed source validation or preflight.
 The deployment wrapper does not itself invoke those two entry points.
 
 ### Responsive agent execution
@@ -149,14 +144,17 @@ a foreground process in that terminal, but the conversational agent must not
 block its own turn waiting for it. Record the exact `ENV_FILE`, command and
 terminal/process identity, then return control to the user immediately.
 
+Use the PowerShell entry points for deployment, status and recovery.
+
 Do not use `sleep`, `watch`, repeated terminal reads or a polling loop to occupy
 the conversation while Azure works. Do not launch an observer Run Command or
 another deployment to make a healthy operation more visible. Answer user
 questions promptly. On a status request, perform one bounded query and return
 the result:
 
-```bash
-ENV_FILE=/absolute/private/path/lab.env ./scripts/lab.sh build-status
+```powershell
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+./scripts/lab.ps1 build-status
 ```
 
 `build-status` discovers every concurrently active canonical stage, so the
@@ -191,8 +189,8 @@ between stages. Stage `30` downloads approximately 38 GiB of images; stage `45`
 downloads SQL media once and installs on three guests in parallel. A quiet
 terminal is not proof of a hang, and a running VM is not proof that SQL is ready.
 
-Use `./scripts/lab.sh build-status` as the normal one-shot check during long
-operations. Use `./scripts/lab.sh stage-progress <stage>` when the relevant
+Use `./scripts/lab.ps1 build-status` as the normal one-shot check during long
+operations. Use `./scripts/lab.ps1 stage-progress <stage>` when the relevant
 stage is already known. Both read existing Managed Run Command instance views
 and return immediately with state, elapsed time and bounded latest timestamped
 output. Neither launches another command inside the busy VM, and no storage
@@ -203,7 +201,7 @@ terminal. Do not tight-poll or confuse repeated wait messages with proof of
 forward progress.
 
 For a stopped build whose host is ready but `20`/`30` have not been submitted,
-use `./scripts/deploy.sh 20-30` to retain their overlap rather than running two
+use `./scripts/deploy.ps1 20-30` to retain their overlap rather than running two
 serial commands. If either operation is already active, inspect it and use the
 appropriate individual recovery boundary; do not launch a competing pair.
 
@@ -214,7 +212,7 @@ and the [deployment guide](02-deploy.md) for implementation details.
 
 1. Establish the last successful stage and whether an Azure command or guest
    operation is still active. Do not start a competing execution.
-2. Use `./scripts/lab.sh stage-log 60`, substituting the affected stage number,
+2. Use `./scripts/lab.ps1 stage-log 60`, substituting the affected stage number,
    and inspect its execution result and retained guest evidence securely.
 3. Correct the first actual failure. Apply the [AG lessons](02-sql-ag-lessons.md)
    and [domain recovery boundaries](02-domain-controller.md#failures-evidence-and-safe-retries),
@@ -224,9 +222,9 @@ and the [deployment guide](02-deploy.md) for implementation details.
 5. Rerun the affected stage, then its successors. For example, after a stage
    `50` failure is corrected:
 
-   ```bash
-   ./scripts/deploy.sh 50 &&
-   ./scripts/deploy.sh 60
+   ```powershell
+   ./scripts/deploy.ps1 50 &&
+   ./scripts/deploy.ps1 60
    ```
 
 Do not restart `all` merely to resume stage `50` or `60`: that would also revisit
@@ -269,7 +267,7 @@ Do not hand off solely because the outer VM exists or an ARM deployment says
 
 Use [domain verification](02-domain-controller.md#verify-the-domain-and-members)
 and [AG verification](02-deploy.md#verify-the-availability-group). Note that
-`lab.sh status` reports the **outer host's power state**, not this whole contract.
+`lab.ps1 status` reports the **outer host's power state**, not this whole contract.
 
 ## Handoff and evidence
 
@@ -290,6 +288,10 @@ mentioned during setup or printed in a terminal:
 - On macOS, give the actual containing folder path for **Finder > Go > Go to
   Folder**, then instruct the user to right-click the file and choose
   **Open With > TextEdit** to view it.
+- On native Windows, give the actual full Windows File Explorer path and the
+  containing folder to paste into its address bar, and instruct the user to
+  open the file with Notepad. The file is under the Windows account's
+  `ArcJumpstart` directory unless the user approved another location.
 - On Windows/WSL2, give both the absolute WSL path and the full Windows File
   Explorer path. Obtain the actual distribution name from `WSL_DISTRO_NAME`
   in the deployment's WSL environment; do not assume Ubuntu. For a WSL-native

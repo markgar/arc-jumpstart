@@ -7,7 +7,7 @@ provisioning must not block any numbered stage or core-readiness check.
 Let Azure finish the request without monitoring it during the build. If you
 later need to troubleshoot access, inspect `arc-jumpstart-bastion` in Azure.
 A submission warning or failed access deployment can be repaired independently:
-retry only `./scripts/deploy.sh bastion` after the previous request is terminal.
+retry only `./scripts/deploy.ps1 bastion` after the previous request is terminal.
 Do not recreate healthy infrastructure to repair browser access.
 
 Builds started before this separation still use their submitted stage `00`
@@ -18,8 +18,9 @@ for that boundary and the standalone commands.
 
 For concise live progress while a stage is running:
 
-```bash
-./scripts/lab.sh stage-progress 40
+```powershell
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+./scripts/lab.ps1 stage-progress 40
 ```
 
 This reads the already-running Managed Run Command's Azure instance view:
@@ -30,9 +31,9 @@ inspect the reported wait—not automatic permission to retry.
 
 Read the latest host transcript for a stage:
 
-```bash
-./scripts/lab.sh stage-log 10
-./scripts/lab.sh stage-log 20
+```powershell
+./scripts/lab.ps1 stage-log 10
+./scripts/lab.ps1 stage-log 20
 ```
 
 The helper retrieves the latest matching transcript from `C:\ArcJumpstart\Logs` through Azure Run Command. Managed Run Command instance view also retains the most recent command status and output.
@@ -60,7 +61,7 @@ not be repeated blindly on a fresh or already-working lab.
 
 - Rerun stage `30`; completed VHDXs are skipped.
 - Confirm the public Jumpstart blob URLs still exist.
-- Copy the artifacts to an approved private container and set `IMAGE_SOURCE_URL` and, when required, `IMAGE_SOURCE_SAS_TOKEN` in `deploy.env`.
+- Copy the artifacts to an approved private container and set `IMAGE_SOURCE_URL` and, when required, `IMAGE_SOURCE_SAS_TOKEN` in the approved private `ENV_FILE`.
 
 **PowerShell Direct cannot sign in**
 
@@ -72,7 +73,7 @@ not be repeated blindly on a fresh or already-working lab.
 
 - Do not bypass the check for the domain/cluster lab.
 - Confirm that the configured source VHDX is a generalized image.
-- Point `IMAGE_SOURCE_URL` and the matching image file name in `deploy.env` at an approved generalized replacement.
+- Point `IMAGE_SOURCE_URL` and the matching image file name in the approved private `ENV_FILE` at an approved generalized replacement.
 - Rerun stage `30`, remove the failed nested child VMs/disks from the host, and rerun stage `40`.
 
 **Stage 40 waits for OOBE, or reports a stale generalized parent**
@@ -110,7 +111,7 @@ not be repeated blindly on a fresh or already-working lab.
 
 **Stage 45 SQL installation fails**
 
-- Read `./scripts/lab.sh stage-log 45` and SQL Setup logs under `C:\Program Files\Microsoft SQL Server\170\Setup Bootstrap\Log` inside the affected guest.
+- Read `./scripts/lab.ps1 stage-log 45` and SQL Setup logs under `C:\Program Files\Microsoft SQL Server\170\Setup Bootstrap\Log` inside the affected guest.
 - Confirm Microsoft download endpoints are reachable from the host and `SQL_DOWNLOAD_URL` points to SQL Server 2025 Enterprise Developer media.
 - Do not repair a cloned ArcBox SQL image in place: stage `40` must create the SQL guests from the Windows-only parent before stage `45` installs SQL.
 - Correct the repository configuration or installer failure, then rerun stage `45`. Existing healthy instances are retained; conflicting or unhealthy instances require investigation.
@@ -201,14 +202,15 @@ safe retry boundaries.
 
 Deallocate the outer host when pausing:
 
-```bash
-./scripts/lab.sh stop
+```powershell
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+./scripts/lab.ps1 stop
 ```
 
 Start it again before continuing:
 
-```bash
-./scripts/lab.sh start
+```powershell
+./scripts/lab.ps1 start
 ```
 
 The nested VMs are configured to start automatically with the host.
@@ -227,8 +229,9 @@ Cleanup spans multiple resource groups. Perform it in this order:
 6. Delete the dedicated Arc, Migrate, SQL Managed Instance, and finally
    infrastructure resource groups.
 
-```bash
-./scripts/lab.sh delete-infra <resource-group-name-from-deploy.env>
+```powershell
+$approvedResourceGroup = 'your-approved-infrastructure-resource-group'
+./scripts/lab.ps1 delete-infra $approvedResourceGroup
 ```
 
 Resource-group deletion is intentionally not included in the deployment wrapper.

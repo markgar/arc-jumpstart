@@ -2,7 +2,8 @@
 
 Infrastructure is automated preparation for the Arc exercises. Start with
 [AGENTS.md](../AGENTS.md) and the [agent bootstrap runbook](../docs/00-agent-bootstrap.md).
-Use `scripts/deploy.sh` rather than assembling ad hoc Bicep parameter files.
+Use cross-platform `scripts/deploy.ps1` (PowerShell 7 and Azure CLI) rather
+than assembling ad hoc Bicep parameter files.
 
 ## Stage map
 
@@ -80,10 +81,10 @@ and workflow, not production physical fault isolation.
 
 Keep the Bicep stage, PowerShell artifact, wrapper parameter mapping, tests and
 documentation consistent. Add or adjust the relevant regression coverage and
-run:
+Run the cross-platform PowerShell path:
 
-```bash
-./scripts/validate.sh
+```powershell
+./scripts/validate.ps1
 ```
 
 Then exercise the affected deployment path in an approved lab. Do not infer a

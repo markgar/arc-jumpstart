@@ -7,8 +7,8 @@ license: MIT
 # Arc Jumpstart operator
 
 Use the repository runbooks as the source of truth. This skill guides the
-workflow; it does not replace the repository's Bicep, Python, Bash, or
-PowerShell implementation.
+workflow; it does not replace the repository's Bicep and PowerShell
+implementation.
 
 ## Start safely
 
@@ -16,15 +16,14 @@ PowerShell implementation.
    `scripts/README.md`.
 2. Determine whether the request is for a new deployment, recovery of an
    existing lab, lifecycle management, Arc handoff, or workshop activity.
-3. On Windows, verify that operational commands will run inside WSL2 with
-   Linux Azure CLI and Python. Native Windows and Git Bash are source-validation
-   environments only.
+3. Use PowerShell 7 and Azure CLI from the same host OS on Windows, macOS or
+   Linux. WSL2 is not required for the PowerShell entry points.
 4. Confirm the approved Azure subscription, dedicated resource group, region,
    cost scope, and auto-shutdown decision before provisioning.
-5. Use a private `ENV_FILE` outside the repository. For new labs, use the visible
-   `$HOME/ArcJumpstart/lab.env`, not a hidden folder. Preserve an existing lab's
-   exact path; never silently move it. Never print, commit, overwrite, or infer
-   credentials.
+5. Use a private `ENV_FILE` outside the repository. For new labs, use
+   `init-config.ps1` to create `$HOME/ArcJumpstart/lab.env` in a visible,
+   owner-only folder. Preserve an existing lab's exact path; never silently
+   move it. Never print, commit, overwrite, or infer credentials.
 
 If required information is missing, ask only for that information. Apply the
 documented defaults for routine choices.
@@ -33,12 +32,14 @@ documented defaults for routine choices.
 
 From the repository root, use the same private `ENV_FILE` for every command:
 
-```bash
-./scripts/validate.sh &&
-ENV_FILE=/absolute/private/path/lab.env ./scripts/preflight.sh infra &&
-ENV_FILE=/absolute/private/path/lab.env ./scripts/deploy.sh all
+```powershell
+./scripts/validate.ps1
+./scripts/preflight.ps1 infra
+./scripts/deploy.ps1 all
 ```
 
+Do not start the next command if the prior one failed. Set `$env:ENV_FILE` to
+the absolute private path in the deployment terminal before running them.
 Run the deployment in a dedicated visible terminal or asynchronous process so
 the conversation remains responsive. Record the exact command, `ENV_FILE`
 path, and process identity. Do not poll continuously or launch a second
@@ -46,8 +47,8 @@ deployment because the first is quiet.
 
 Use one-shot progress checks only when useful:
 
-```bash
-ENV_FILE=/absolute/private/path/lab.env ./scripts/lab.sh build-status
+```powershell
+./scripts/lab.ps1 build-status
 ```
 
 ## Recovery
@@ -57,7 +58,7 @@ ENV_FILE=/absolute/private/path/lab.env ./scripts/lab.sh build-status
 - Follow the recovery boundary in `docs/02-sql-ag-lessons.md` and
   `docs/06-troubleshooting-cleanup.md`.
 - Resume only the affected stage and required successors.
-- Never rerun `deploy.sh all` against an already promoted domain.
+- Never rerun `deploy.ps1 all` against an already promoted domain.
 - Preserve working guests, disks, databases, identities, and active operations
   unless the user explicitly approves a scoped rebuild or deletion.
 
@@ -89,8 +90,9 @@ Explicitly include **Your lab configuration and passwords** in the final
 user-facing handoff. Verify the configuration file exists, give its actual full
 absolute path (not `$HOME`, `~`, or a placeholder), and explain how to find and
 view it. On macOS, provide Finder **Go to Folder** instructions and **Open With
-TextEdit**. On Windows, provide both the WSL path and full File Explorer path
-using the actual distro/user, and **Open With Notepad**. On Linux, provide file
+TextEdit**. On native Windows, provide the full File Explorer path and **Open
+With Notepad**; on WSL, provide both the WSL path and Windows path using the
+actual distro/user. On Linux, provide file
 manager/text editor instructions. Identify any remote execution host and its
 approved access method. Never display the contents; warn that the file contains
 passwords and must not be shared or committed. Follow the detailed handoff

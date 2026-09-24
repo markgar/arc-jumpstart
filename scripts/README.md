@@ -1,64 +1,60 @@
 # Script entry points
 
-Run these Bash/Python entry points from the repository root on macOS, Linux or
-WSL2. They drive the Bicep stages and host-side Windows automation. Do not run
-the Hyper-V/AD PowerShell artifacts directly on the workstation.
-
-On Windows, WSL2 is required for `preflight.sh`, `deploy.sh` and `lab.sh`.
-Git Bash/MSYS2/Cygwin are source-validation environments only; the operational
-wrappers reject them before accessing Azure. Install Azure CLI and Python
-inside WSL2 and keep the repository and private environment file in the WSL
-filesystem. Do not combine Windows-native tools with WSL commands. See the
-[Windows prerequisite procedure](../docs/01-prerequisites.md#windows-required-wsl2-setup).
+Run the PowerShell 7 entry points from the repository root on Windows, macOS or
+Linux with Azure CLI and its Bicep component. WSL2 is not required.
+These wrappers drive the Bicep stages and host-side Windows
+automation; do not run the Hyper-V/AD artifacts directly on the workstation.
+Run PowerShell and Azure CLI in the same operating system.
 
 See the [agent bootstrap runbook](../docs/00-agent-bootstrap.md) for the mission,
 inputs and required ready-environment outcome.
 
 ## Command reference
 
-| Command | Purpose and boundary |
+| Cross-platform PowerShell 7 command | Purpose |
 |---|---|
-| `./scripts/validate.sh` | Bicep compilation, Bash syntax, Python regression tests and available ShellCheck/PowerShell checks. Does not deploy Azure resources. It may run from Git Bash on native Windows, but that validates source only; full coverage requires the optional tools to be present. |
-| `./scripts/preflight.sh infra` | Checks the configured Azure target, required infrastructure registrations, host SKU availability and download reachability; prints cost considerations. Does not provision the lab or automatically register providers. |
-| `./scripts/preflight.sh full` | Also checks registrations for user-authenticated Arc setup and the later assessment/modeling and SQL Managed Instance migration activities. Does not perform them. |
-| `./scripts/deploy.sh all` | Runs the complete saved infrastructure sequence through stage `60`. Intended for a new lab, not blanket repair of an existing domain. |
-| `./scripts/deploy.sh 60` | Runs one supported stage. Other numbers are `00`, `10`, `20`, `30`, `40`, `45` and `50`. Use for scoped recovery and then continue with successors. |
-| `./scripts/deploy.sh 20-30` | Starts image downloads and configures the independent host network while they run, then requires successful download completion. Requires a ready stage `10` host; do not use while either earlier operation is active. |
-| `./scripts/deploy.sh bastion` | Submits only the independent Bastion deployment with `--no-wait`, against an existing foundation network. Explicitly requests Bastion even when `DEPLOY_BASTION=false`; requires only the four Azure target settings, not guest credentials. Does not verify readiness. |
-| `./scripts/deploy.sh auto-shutdown` | Creates, updates, enables or disables only the outer host's daily Azure auto-shutdown schedule. It never replays host initialization or nested infrastructure stages. |
-| `./scripts/deploy.sh arc-launchers` | Creates/tags the dedicated Arc resource group and securely stages **Connect to Azure Arc** on all four Windows guest public desktops. It does not connect any machine; the user completes device-code authentication with their own Azure identity. |
-| `./scripts/lab.sh status` | Reports outer host power state only; not whole-lab readiness. |
-| `./scripts/lab.sh build-status` | Discovers every active canonical stage and displays each existing Managed Run Command instance view. If none is active, displays the most recently started stage. Does not launch a VM command. |
-| `./scripts/lab.sh stage-log 60` | Displays the latest stage transcript through `show-stage-log.py`, suppressing startup headers and redacting configured sensitive values. Raw host files remain sensitive. |
-| `./scripts/lab.sh stage-progress 40` | Reads the active Managed Run Command's existing instance view and returns state, start/end, elapsed time and latest redacted output. It does not launch another command inside the busy VM. |
-| `./scripts/lab.sh inventory` | Runs the versioned Azure Resource Graph query against the configured Arc resource group and writes timestamped raw JSON and modeling CSV under `out/arc-modeling/`. Run only after Arc and assessment inventory are current. |
-| `./scripts/lab.sh stop` / `start` | Deallocates or starts the outer Azure host. Deallocation does not stop storage, Bastion, or SQL Managed Instance charges. |
-| `./scripts/lab.sh delete-infra YOUR_RESOURCE_GROUP` | Deletes the configured infrastructure RG only when the argument matches it. Requires explicit deletion approval and the wider cleanup sequence first. |
-| `python3 scripts/check-sql-media.py --help` | Optional local media diagnostic; stage `45` already performs its own media checks. |
+| `./scripts/init-config.ps1` | Creates the owner-only external `ArcJumpstart/lab.env` template, without overwriting an existing file. |
+| `./scripts/validate.ps1` | Compiles Bicep and runs PowerShell source and stage regressions. No Azure resources are created. |
+| `./scripts/preflight.ps1 infra` / `full` | Checks Azure registrations, host SKU and media reachability. Does not create resources or register providers. |
+| `./scripts/deploy.ps1 all` / `20-30` / `<stage>` | Deploys all stages or a scoped recovery stage with predecessor and Run Command gates. |
+| `./scripts/deploy.ps1 bastion` / `auto-shutdown` / `arc-launchers` | Independent access, shutdown and interactive Arc-launcher setup. |
+| `./scripts/lab.ps1 build-status` / `stage-progress 40` / `stage-log 40` | One-shot redacted stage views; live views never start a competing VM command. |
+| `./scripts/lab.ps1 status` / `start` / `stop` / `inventory` / `delete-infra <RG>` | Host power, modeling export and explicitly confirmed infrastructure cleanup. |
+| `./scripts/check-sql-media.ps1` | Optional local HTTPS media download and length/structure/SHA-256 verification; stage `45` has its own checks. |
+
+From a PowerShell 7 terminal, set `$env:ENV_FILE` to the actual external file
+path, sign in with `az login`, then run `validate.ps1`, `preflight.ps1 infra`,
+and `deploy.ps1 all` **in order**, stopping on any failure. Keep deployment in a
+separate terminal or attached asynchronous process. For a new file, use
+`init-config.ps1`, then fill it privately before preflight. Do not paste the
+configuration or passwords into chat.
 
 ## Normal automated setup
 
 With a populated owner-only environment file outside the repository and an
 authenticated Azure CLI user:
 
-```bash
-ENV_FILE=/absolute/private/path/lab.env
-./scripts/validate.sh &&
-ENV_FILE="$ENV_FILE" ./scripts/preflight.sh infra &&
-ENV_FILE="$ENV_FILE" ./scripts/deploy.sh all
+```powershell
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+./scripts/validate.ps1 &&
+./scripts/preflight.ps1 infra &&
+./scripts/deploy.ps1 all
 ```
 
-Azure CLI and Python 3 are required. The wrapper currently rejects service
-principal authentication. Authentication, permissions and the cost envelope
-must be supplied/approved before provisioning.
+Use the actual private path if it differs from the new-lab default. Run this
+chain in a dedicated visible terminal or attached asynchronous process; leave
+the conversation responsive. The PowerShell wrappers require an interactive
+Azure CLI user; service-principal authentication is not supported.
+Authentication, permissions and the cost envelope must be supplied/approved
+before provisioning.
 
 Bastion is enabled by default. `all` and `00` submit it independently after the
 core network deployment completes, then return to the numbered sequence without
 waiting for access readiness. Setting `DEPLOY_BASTION=false` omits that request.
 Resuming stages `10`-`60` never submits, polls or waits for Bastion. An optional
 submission error is printed as a warning without failing the core sequence;
-`deploy.sh bastion` used on its own returns a failed submission's nonzero exit
-status. After Azure accepts the request, the build does not monitor it.
+`deploy.ps1 bastion` used on its own reports a failed submission instead of
+silently succeeding. After Azure accepts the request, the build does not monitor it.
 Azure retains any later provisioning errors in the independent deployment;
 they are not reflected in the exit code of a successful submission.
 
@@ -81,9 +77,9 @@ operator whether to enable it and record `true` or `false`. When enabled,
 `AUTO_SHUTDOWN_TIME` is a 24-hour `HHmm` value and
 `AUTO_SHUTDOWN_TIME_ZONE` is a Windows time-zone ID. The example suggests
 `2200` and `Central Standard Time`, but both are operator decisions. Change the
-policy later with `./scripts/deploy.sh auto-shutdown`; do not rerun stage `10`.
+policy later with `./scripts/deploy.ps1 auto-shutdown`; do not rerun stage `10`.
 
-`deploy.sh all` stages the Arc desktop launchers after stage `60` by default.
+`deploy.ps1 all` stages the Arc desktop launchers after stage `60` by default.
 Set `PREPARE_ARC_LAUNCHERS=false` to opt out. Staging does not install or
 connect Arc; it only places the clickable helper and approved non-secret Azure
 target identifiers on the guest desktops. `ARC_RESOURCE_GROUP` defaults to
@@ -100,8 +96,9 @@ service is required for this workshop.
 
 An attached agent should normally inspect a running build with:
 
-```bash
-ENV_FILE=/absolute/private/path/lab.env ./scripts/lab.sh build-status
+```powershell
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+./scripts/lab.ps1 build-status
 ```
 
 It discovers all concurrently active canonical stages, including overlapping
@@ -125,10 +122,11 @@ display. They do not rewrite the raw host transcript, which remains sensitive.
 
 All three operational wrappers support an alternative environment file:
 
-```bash
-ENV_FILE=/absolute/private/path/lab.env ./scripts/preflight.sh infra &&
-ENV_FILE=/absolute/private/path/lab.env ./scripts/deploy.sh all
-ENV_FILE=/absolute/private/path/lab.env ./scripts/lab.sh status
+```powershell
+$env:ENV_FILE = 'C:\path\to\approved\lab.env'
+./scripts/preflight.ps1 infra &&
+./scripts/deploy.ps1 all
+./scripts/lab.ps1 status
 ```
 
 Replace that path with the approved file. Use a consistent configuration for
@@ -137,7 +135,7 @@ group does not describe the build being monitored.
 
 ## Completion and recovery
 
-`deploy.sh` enforces stage predecessors. Stage `10` includes a host restart and
+`deploy.ps1` enforces stage predecessors. Stage `10` includes a host restart and
 agent wait. `all` and `20-30` submit the image Run Command before configuring
 the independent internal network, then join the fresh image execution before
 proceeding. Individual `30` and stage `45` still wait for their new asynchronous
@@ -148,11 +146,11 @@ may continue downloading; inspect the command before retrying.
 Use the stage number that failed, not a second `all` invocation, to resume.
 For example:
 
-```bash
-./scripts/lab.sh stage-log 50
+```powershell
+./scripts/lab.ps1 stage-log 50
 # Resolve the first failure using saved source and the domain runbook.
-./scripts/deploy.sh 50 &&
-./scripts/deploy.sh 60
+./scripts/deploy.ps1 50 &&
+./scripts/deploy.ps1 60
 ```
 
 Do not start another installation or configuration operation while earlier work
@@ -163,11 +161,9 @@ and [cleanup guide](../docs/06-troubleshooting-cleanup.md).
 
 ## Regression coverage
 
-`validate.sh` invokes `test-check-sql-media.py`, `test-docs.py`,
-`test-export-arc-inventory.py`,
-`test-runtime.py`, `test-skill.py`, `test-stage-log.py`, `test-bastion.py`, and, when
-PowerShell is available, `test-stage20.ps1`, `test-stage40.ps1`, `test-stage45.ps1`,
-`test-stage50.ps1` and `test-stage60.ps1`.
+`validate.ps1` compiles Bicep and runs the PowerShell runtime, stage-view,
+lab-runtime, repository-documentation, Arc-launcher, media-checker and guest-stage regressions.
+Stage `45` verifies its SQL media in the guest installation workflow.
 
 Preserve coverage for generated command arguments, real native report formats,
 SQL type conversion/startup transitions, parallel installer boundaries,

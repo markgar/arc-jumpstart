@@ -1,10 +1,14 @@
 # Lessons from the first clean-room attempt
 
+This record documents build evidence and safe recovery boundaries.
+For a new build or recovery, use the PowerShell commands in the
+[bootstrap runbook](00-agent-bootstrap.md).
+
 ## Evidence and limits
 
 A fresh agent used baseline `7323b9d` and repository instructions on
 2026-09-16, without the original debugging conversation. Source validation
-passed, including Bicep compilation, ShellCheck and the PowerShell stage
+passed, including Bicep compilation and the PowerShell stage
 regressions. Infrastructure preflight passed for the selected target; the
 public Windows, Ubuntu and SQL media endpoints were reachable.
 
@@ -18,9 +22,9 @@ rebuild.
 ## Bastion was the first avoidable wait
 
 The VNet was ready at about 13:26:35 UTC. Stage `00` did not finish until
-13:37:10 UTC because its nested deployment also contained Bastion. The original
-`deploy.sh all` waited for that entire deployment before starting the host:
-roughly ten and a half minutes after the network was ready.
+13:37:10 UTC because its nested deployment also contained Bastion. The
+deployment wrapper at that time waited for the entire deployment before
+starting the host: roughly ten and a half minutes after the network was ready.
 
 The prior documentation said stage `10` could use the ready VNet directly.
 That was true for an individually invoked stage, but did not describe the
@@ -32,16 +36,16 @@ The saved correction is:
 - Stage `00` creates the core network and reserves `AzureBastionSubnet`.
 - [Independent Bastion Bicep](../infra/stages/bastion/main.bicep) creates only
   Bastion and its public IP, using the existing subnet.
-- [`deploy.sh`](../scripts/deploy.sh) keeps Bastion enabled by default but
+- The deployment wrapper keeps Bastion enabled by default but
   submits it with `--no-wait` after the foundation succeeds. It immediately
   continues the numbered build without a Bastion completion gate.
 - Azure finishes Bastion independently; there is no build-side monitoring or
   completion join. Failed access does not trigger a lab rebuild.
 
-[`test-bastion.py`](../scripts/test-bastion.py) checks compiled resource graphs
-and runs the wrapper against a fake Azure CLI, including a complete core
-sequence while Bastion is running or failed. A later live build also used the
-independent submission path without making Bastion a core-stage gate.
+The PowerShell wrapper has mock coverage for independent Bastion submission in
+[`test-powershell-runtime.ps1`](../scripts/test-powershell-runtime.ps1).
+A later live build also used the independent submission path without making
+Bastion a core-stage gate.
 
 ## Region availability and quota are separate checks
 
@@ -52,7 +56,7 @@ interpret a zone restriction as a blanket regional prohibition, or assume a
 default SKU is available to every subscription.
 
 The chosen West US 2 target had sufficient regional and ESv5-family vCPU quota
-for the 16-vCPU host. The agent checked quota manually: `preflight.sh` checks
+for the 16-vCPU host. The agent checked quota manually: the preflight checks
 SKU availability, but does not yet enforce available regional and family quota.
 For a new allocation, verify both quotas can accommodate the requested vCPUs;
 for reuse or resizing, account for the existing allocation instead of counting
@@ -74,7 +78,7 @@ missing Azure lab before creating resources or changing credentials.
 ## Stopping an agent does not stop Azure
 
 The original deployment terminal and read-only watcher were interrupted, and
-process inspection confirmed that no local `deploy.sh` remained. No cloud
+process inspection confirmed that no local deployment process remained. No cloud
 operation was cancelled and no resource was stopped, deallocated or deleted.
 Stage `10` had already been submitted automatically after stage `00` finished,
 so Azure could continue it after the local agent stopped.
@@ -200,8 +204,8 @@ not exercised or monitored in this recovery.
    minute because its new Action Run Command queued behind the active stage.
    Stage `40` also displayed transient credential errors before successful
    first-boot completion, which looked alarming without phase context. Main
-   commits `558d458` and `95ae18c` added timestamped phase messages and changed
-   `lab.sh stage-progress` to read the active Managed Run Command's existing
+   commits `558d458` and `95ae18c` added timestamped phase messages. The
+   `lab.ps1 stage-progress` command now reads the active Managed Run Command's existing
    instance view instead of entering the busy VM channel. A subsequent fresh
    build returned stage `10` disk/feature phases and live stage `30` file,
    percentage and throughput immediately. Continue exercising it through the

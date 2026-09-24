@@ -50,6 +50,15 @@ subscription and time. Confirm that:
 2. Your regional vCPU quota can accommodate it.
 3. The selected size exposes nested virtualization.
 
+Stage `40` assigns 6 virtual processors to `JS-SQL-01`, 8 each to
+`JS-SQL-AG-01` and `JS-SQL-AG-02`, and 2 each to the DC and Ubuntu guests.
+That is 26 assigned guest virtual processors on the default 16-vCPU host:
+intentional CPU overcommit, not 26 dedicated host cores. Concurrent SQL work
+can contend for CPU and take longer; choose a larger nested-virtualization-capable
+host if this contention is unacceptable, with corresponding quota and cost.
+This topology applies to new builds; stage `40` does not resize existing guests
+on a retry.
+
 The prerequisite lab creates a 1 TiB Premium SSD, optional Azure Bastion, a
 public IP for Bastion, and normal networking resources. The migration activity
 also creates a temporary SQL managed instance and storage account after a

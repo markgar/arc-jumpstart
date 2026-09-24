@@ -606,6 +606,9 @@ function New-NestedVM {
         [Parameter(Mandatory)]
         [int]$MemoryGB,
 
+        [Parameter(Mandatory)]
+        [int]$ProcessorCount,
+
         [switch]$Linux
     )
 
@@ -630,6 +633,9 @@ function New-NestedVM {
         if ([IO.Path]::GetFullPath($childVhd) -notin $attachedChains) {
             throw "Existing VM $Name is not attached to its expected child disk. Preserve the VM/disks and investigate."
         }
+        if ($existingVm.ProcessorCount -ne $ProcessorCount) {
+            throw "Existing VM $Name has $($existingVm.ProcessorCount) virtual processors; this build specifies $ProcessorCount. Preserve the existing VM and use deliberate recovery or a fresh lab; stage 40 will not resize it."
+        }
     }
     elseif ((Test-Path -LiteralPath $childVhd) -and @(Get-GeneralizedParentDependents -ParentVhd $childVhd).Count) {
         throw "Disconnected child disk $childVhd still has dependents. Preserve its chain; do not attach an earlier disk state automatically."
@@ -653,11 +659,15 @@ function New-NestedVM {
     }
 
     $isRetired = $retiredVmNames -contains $Name
-    Set-VM `
-        -Name $Name `
-        -ProcessorCount 2 `
-        -AutomaticStartAction $(if ($isRetired) { 'Nothing' } else { 'Start' }) `
-        -AutomaticStopAction ShutDown
+    $vmSettings = @{
+        Name = $Name
+        AutomaticStartAction = $(if ($isRetired) { 'Nothing' } else { 'Start' })
+        AutomaticStopAction = 'ShutDown'
+    }
+    if (-not $existingVm) {
+        $vmSettings.ProcessorCount = $ProcessorCount
+    }
+    Set-VM @vmSettings
     if ($isRetired) {
         if ((Get-VM -Name $Name).State -ne 'Off') {
             Stop-VM -Name $Name -Force
@@ -681,30 +691,35 @@ try {
             Name = 'JS-DC-01'
             Parent = $generalizedWindowsImage
             Memory = $DcMemoryGB
+            Processors = 2
             Linux = $false
         },
         @{
             Name = 'JS-SQL-01'
             Parent = $generalizedWindowsImage
             Memory = $SqlMemoryGB
+            Processors = 6
             Linux = $false
         },
         @{
             Name = 'JS-SQL-AG-01'
             Parent = $generalizedWindowsImage
             Memory = $SqlMemoryGB
+            Processors = 8
             Linux = $false
         },
         @{
             Name = 'JS-SQL-AG-02'
             Parent = $generalizedWindowsImage
             Memory = $SqlMemoryGB
+            Processors = 8
             Linux = $false
         },
         @{
             Name = 'JS-UBUNTU-01'
             Parent = Join-Path $imageRoot $LinuxImageFileName
             Memory = $LinuxMemoryGB
+            Processors = 2
             Linux = $true
         }
     )
@@ -715,6 +730,7 @@ try {
             -Name $definition.Name `
             -ParentVhd $definition.Parent `
             -MemoryGB $definition.Memory `
+            -ProcessorCount $definition.Processors `
             -Linux:$definition.Linux
     }
 

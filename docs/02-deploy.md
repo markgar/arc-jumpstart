@@ -98,6 +98,13 @@ machine SIDs before continuing. Do not manually alter the parent, readiness
 markers, or guest setup state. See the
 [SQL AG lessons](02-sql-ag-lessons.md#prepare-windows-first-then-install-sql-on-each-clone)
 for implementation history and recovery boundaries.
+The new-build allocation is 6 virtual processors for the standalone SQL guest,
+8 for each AG guest, and 2 each for the DC and Ubuntu guests. This intentionally
+overcommits the default 16-vCPU outer host (26 assigned guest processors);
+parallel SQL operations may contend for CPU. On a stage `40` retry, a guest
+whose existing processor count differs is preserved and reported rather than
+resized; use deliberate recovery or build a fresh lab, not `deploy.ps1 all`
+against an existing domain.
 
 Stage `45` downloads SQL Server 2025 Enterprise Developer media once to the host's persistent disk and installs the default database-engine instance on each of the three SQL guests. It uses the ODBC driver and `sqlcmd` tooling supplied by SQL Setup rather than installing an older command-line utility separately. Installation uses Windows authentication and grants the guest's local Administrator SQL sysadmin access; no SQL authentication password is configured. Stage `50` later grants the lab domain administrators SQL access, and stage `60` configures the domain service account and availability group through SQL Server's native WMI provider.
 

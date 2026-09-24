@@ -370,16 +370,115 @@ function Assert-Throws {
     $script:childExists = $true; $script:detachedDependents = $false
     foreach ($registered in @($true, $false)) {
         $script:vmExists = $registered; $script:childParent = $otherDisk; $script:vmMutations = 0
-        Assert-Throws { New-NestedVM -Name test -ParentVhd $parent -MemoryGB 4 } 'Parent mismatch'
+        Assert-Throws { New-NestedVM -Name test -ParentVhd $parent -MemoryGB 4 -ProcessorCount 2 } 'Parent mismatch'
         if ($script:vmMutations) { throw 'Parent mismatches must preserve both registered and disconnected children.' }
     }
     $script:vmExists = $true; $script:childParent = $parent; $script:childExists = $false
-    Assert-Throws { New-NestedVM -Name test -ParentVhd $parent -MemoryGB 4 } 'no expected child disk'
+    Assert-Throws { New-NestedVM -Name test -ParentVhd $parent -MemoryGB 4 -ProcessorCount 2 } 'no expected child disk'
     $script:childExists = $true; $script:attachedDisk = $otherDisk
-    Assert-Throws { New-NestedVM -Name test -ParentVhd $parent -MemoryGB 4 } 'not attached to its expected child disk'
+    Assert-Throws { New-NestedVM -Name test -ParentVhd $parent -MemoryGB 4 -ProcessorCount 2 } 'not attached to its expected child disk'
     $script:vmExists = $false; $script:detachedDependents = $true
-    Assert-Throws { New-NestedVM -Name test -ParentVhd $parent -MemoryGB 4 } 'Disconnected child disk'
+    Assert-Throws { New-NestedVM -Name test -ParentVhd $parent -MemoryGB 4 -ProcessorCount 2 } 'Disconnected child disk'
     if ($script:vmMutations) { throw 'Unexpected attachments and detached chains must remain untouched.' }
+}
+
+& {
+    $definitionAssignment = $ast.Find({
+        param($node)
+        $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+            $node.Left.Extent.Text -eq '$definitions'
+    }, $true)
+    $generalizedWindowsImage = 'windows-parent.vhdx'
+    $imageRoot = 'images'
+    $LinuxImageFileName = 'ubuntu.vhdx'
+    $DcMemoryGB = 4; $SqlMemoryGB = 8; $LinuxMemoryGB = 4
+    $definitions = & ([scriptblock]::Create($definitionAssignment.Right.Extent.Text))
+    $expectedProcessors = @{
+        'JS-DC-01' = 2
+        'JS-SQL-01' = 6
+        'JS-SQL-AG-01' = 8
+        'JS-SQL-AG-02' = 8
+        'JS-UBUNTU-01' = 2
+    }
+    if ($definitions.Count -ne $expectedProcessors.Count -or
+        ($definitions | Measure-Object -Property Processors -Sum).Sum -ne 26) {
+        throw 'Stage 40 must assign exactly 26 guest virtual processors across five guests.'
+    }
+    foreach ($definition in $definitions) {
+        if (-not $expectedProcessors.ContainsKey($definition.Name) -or
+            $definition.Processors -ne $expectedProcessors[$definition.Name]) {
+            throw "Unexpected processor allocation for $($definition.Name)."
+        }
+    }
+
+    $vmRoot = Join-Path (Get-Location) '.stage40-cpu-fixture'
+    $switchName = 'test-switch'
+    $retiredVmNames = @()
+    $script:cpuVms = @{}
+    $script:cpuMutations = 0
+    function Test-Path {
+        param($Path, $LiteralPath)
+        if ($LiteralPath) { $Path = $LiteralPath }
+        $Path -eq $generalizedWindowsImage -or $Path -eq $definitions[-1].Parent -or
+            $Path -in @($script:cpuVms.Values | ForEach-Object Disk)
+    }
+    function Get-VM { param($Name, $ErrorAction) $script:cpuVms[$Name] }
+    function Get-VHD { param($Path, $ErrorAction) @{ ParentPath = $script:cpuVms[[IO.Path]::GetFileNameWithoutExtension($Path)].Parent } }
+    function Get-VMHardDiskDrive { param($VM, $ErrorAction) @{ Path = $VM.Disk } }
+    function Get-VhdChainPaths { param($Path) [IO.Path]::GetFullPath($Path) }
+    function Get-GeneralizedParentDependents { param($ParentVhd) @() }
+    function New-Item { param($ItemType, $Path, [switch]$Force) $script:cpuMutations++ }
+    function New-VHD { param($Path, $ParentPath, [switch]$Differencing) $script:cpuMutations++ }
+    function New-VM {
+        param($Name, $Generation, $MemoryStartupBytes, $VHDPath, $Path, $SwitchName)
+        $script:cpuMutations++
+        $script:cpuVms[$Name] = [pscustomobject]@{ State = 'Off'; ProcessorCount = 0; Disk = $VHDPath; Parent = $script:parentForVm }
+    }
+    function Enable-VMIntegrationService { param($VMName, $Name) }
+    function Set-VMFirmware { param($VMName, $EnableSecureBoot) }
+    function Set-VM {
+        param($Name, $ProcessorCount, $AutomaticStartAction, $AutomaticStopAction)
+        $script:cpuMutations++
+        if ($PSBoundParameters.ContainsKey('ProcessorCount')) {
+            if ($script:cpuVms[$Name].State -eq 'Running') { throw 'Cannot resize a running VM.' }
+            $script:cpuVms[$Name].ProcessorCount = $ProcessorCount
+        }
+    }
+    function Start-VM { param($Name) $script:cpuVms[$Name].State = 'Running' }
+
+    foreach ($definition in $definitions) {
+        $script:parentForVm = $definition.Parent
+        New-NestedVM -Name $definition.Name -ParentVhd $definition.Parent `
+            -MemoryGB $definition.Memory -ProcessorCount $definition.Processors -Linux:$definition.Linux
+        if ($script:cpuVms[$definition.Name].ProcessorCount -ne $expectedProcessors[$definition.Name]) {
+            throw "Fresh $($definition.Name) was not provisioned with its assigned processors."
+        }
+        $before = $script:cpuVms[$definition.Name].ProcessorCount
+        New-NestedVM -Name $definition.Name -ParentVhd $definition.Parent `
+            -MemoryGB $definition.Memory -ProcessorCount $definition.Processors -Linux:$definition.Linux
+        if ($script:cpuVms[$definition.Name].ProcessorCount -ne $before) {
+            throw 'A matching running guest must be retained without resizing.'
+        }
+    }
+    $script:cpuVms['JS-SQL-AG-01'].ProcessorCount = 2
+    $script:parentForVm = $generalizedWindowsImage
+    $beforeMutations = $script:cpuMutations
+    Assert-Throws {
+        New-NestedVM -Name 'JS-SQL-AG-01' -ParentVhd $generalizedWindowsImage `
+            -MemoryGB $SqlMemoryGB -ProcessorCount 8
+    } 'will not resize it'
+    if ($script:cpuMutations -ne $beforeMutations -or
+        $script:cpuVms['JS-SQL-AG-01'].ProcessorCount -ne 2) {
+        throw 'A CPU mismatch must fail before mutating an existing guest.'
+    }
+    $script:cpuVms['JS-SQL-AG-01'].State = 'Off'
+    Assert-Throws {
+        New-NestedVM -Name 'JS-SQL-AG-01' -ParentVhd $generalizedWindowsImage `
+            -MemoryGB $SqlMemoryGB -ProcessorCount 8
+    } 'will not resize it'
+    if ($script:cpuMutations -ne $beforeMutations) {
+        throw 'A stopped existing guest must not be silently resized either.'
+    }
 }
 
 function New-EdgePackage {
@@ -535,15 +634,16 @@ if (-not $source.Contains('$unattend = New-WindowsServer2022Unattend -Administra
     }, $true))
     if ($loops.Count -ne 2) { throw 'Starting all guests and checking readiness must use separate phases.' }
     $definitions = @(
-        @{ Name = 'dc'; Parent = 'windows'; Memory = 4; Linux = $false },
-        @{ Name = 'sql1'; Parent = 'windows'; Memory = 8; Linux = $false },
-        @{ Name = 'sql2'; Parent = 'windows'; Memory = 8; Linux = $false },
-        @{ Name = 'sql3'; Parent = 'windows'; Memory = 8; Linux = $false },
-        @{ Name = 'linux'; Parent = 'linux'; Memory = 4; Linux = $true }
+        @{ Name = 'dc'; Parent = 'windows'; Memory = 4; Processors = 2; Linux = $false },
+        @{ Name = 'sql1'; Parent = 'windows'; Memory = 8; Processors = 6; Linux = $false },
+        @{ Name = 'sql2'; Parent = 'windows'; Memory = 8; Processors = 8; Linux = $false },
+        @{ Name = 'sql3'; Parent = 'windows'; Memory = 8; Processors = 8; Linux = $false },
+        @{ Name = 'linux'; Parent = 'linux'; Memory = 4; Processors = 2; Linux = $true }
     )
     $script:bootEvents = [Collections.Generic.List[string]]::new()
     function New-NestedVM {
-        param($Name, $ParentVhd, $MemoryGB, [switch]$Linux)
+        param($Name, $ParentVhd, $MemoryGB, $ProcessorCount, [switch]$Linux)
+        if ($ProcessorCount -ne $definition.Processors) { throw 'Guest processor count was not passed to VM creation.' }
         $script:bootEvents.Add("start:$Name")
     }
     function Wait-VMHeartbeat {

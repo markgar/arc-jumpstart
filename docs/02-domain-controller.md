@@ -89,7 +89,7 @@ and do not rerun the workgroup-oriented stage `40` against a promoted DC.
 From the repository root, with the intended Azure account/subscription selected:
 
 ```powershell
-$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
 ./scripts/deploy.ps1 50
 ```
 

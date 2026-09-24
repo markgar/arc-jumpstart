@@ -7,11 +7,11 @@ function Get-LabEnvironmentFile {
 function Read-LabSettings {
     param([Parameter(Mandatory)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw "Missing configuration file at $Path. Set ENV_FILE to the private lab.env path."
+        throw "Missing configuration file at $Path. Set ENV_FILE to the private environment file path."
     }
     $settings = @{}
     $allowed = @(
-        'AZURE_SUBSCRIPTION_ID', 'AZURE_LOCATION', 'AZURE_RESOURCE_GROUP', 'NAME_PREFIX',
+        'AZURE_SUBSCRIPTION_ID', 'AZURE_LOCATION', 'RESOURCE_GROUP_ROOT', 'AZURE_RESOURCE_GROUP', 'NAME_PREFIX',
         'HOST_ADMIN_USERNAME', 'HOST_ADMIN_PASSWORD', 'NESTED_WINDOWS_PASSWORD',
         'SAFE_MODE_PASSWORD', 'SQL_SERVICE_ACCOUNT_PASSWORD', 'DEPLOY_BASTION',
         'AUTO_SHUTDOWN_ENABLED', 'AUTO_SHUTDOWN_TIME', 'AUTO_SHUTDOWN_TIME_ZONE',
@@ -29,7 +29,41 @@ function Read-LabSettings {
         if ($settings.ContainsKey($key)) { throw "Duplicate configuration key: $key." }
         $settings[$key] = $line.Substring($separator + 1)
     }
+    if ($settings.ContainsKey('RESOURCE_GROUP_ROOT')) {
+        $root = $settings.RESOURCE_GROUP_ROOT
+        if (-not $root -or $root -eq 'CHANGEME' -or $root.Length -gt 84 -or
+            $root -notmatch '^[\p{L}\p{Nd}_().-]+(?<!\.)$' -or
+            $root -match '^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)') {
+            throw 'RESOURCE_GROUP_ROOT must be a valid cross-platform name of 1-84 characters, not ending in a period.'
+        }
+        foreach ($entry in @{ AZURE_RESOURCE_GROUP = "$root-infra"; ARC_RESOURCE_GROUP = "$root-arc" }.GetEnumerator()) {
+            if ($settings[$entry.Key] -and $settings[$entry.Key] -ne $entry.Value) {
+                throw "$($entry.Key) conflicts with RESOURCE_GROUP_ROOT. Expected $($entry.Value)."
+            }
+            $settings[$entry.Key] = $entry.Value
+        }
+    }
     return $settings
+}
+
+function Assert-NewLabResourceGroups {
+    param([Parameter(Mandatory)][hashtable]$Settings)
+    $arcGroup = if ($Settings.ARC_RESOURCE_GROUP) {
+        $Settings.ARC_RESOURCE_GROUP
+    } else { "$($Settings.AZURE_RESOURCE_GROUP)-arc" }
+    $existing = @()
+    foreach ($group in @($Settings.AZURE_RESOURCE_GROUP, $arcGroup) | Select-Object -Unique) {
+        $result = Invoke-LabAz @('group', 'exists', '--name', $group,
+            '--subscription', $Settings.AZURE_SUBSCRIPTION_ID, '--output', 'tsv')
+        switch ($result.Output.Trim()) {
+            'true' { $existing += $group }
+            'false' {}
+            default { throw "Could not determine whether resource group $group exists." }
+        }
+    }
+    if ($existing.Count) {
+        throw "Resource groups already exist: $($existing -join ', '). Refusing a fresh deployment. Choose another root or use documented stage-specific recovery; do not rerun all."
+    }
 }
 
 function Assert-LabSettings {

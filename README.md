@@ -89,19 +89,32 @@ configuration template in the visible `ArcJumpstart` folder in your home
 directory, outside the repository:
 
 ```powershell
-./scripts/init-config.ps1
+$env:ENV_FILE = $null # Clear a previous lab's override before creating a new file.
+./scripts/init-config.ps1 -ResourceGroupRoot rg-arc-jumpstart-v2
 ```
 
-The command prints the absolute path without showing its contents and never
-overwrites an existing file. Edit that file to replace every `CHANGEME`.
+The command creates `$HOME/ArcJumpstart/<root>.env` and records
+`RESOURCE_GROUP_ROOT`. `rg-arc-jumpstart-v2` is a suggested default; choose
+another root with `-ResourceGroupRoot`. At runtime the scripts derive
+`AZURE_RESOURCE_GROUP=<root>-infra` and `ARC_RESOURCE_GROUP=<root>-arc`;
+the suffixes are fixed.
+For the example, the file is `rg-arc-jumpstart-v2.env` and the groups are
+`rg-arc-jumpstart-v2-infra` and `rg-arc-jumpstart-v2-arc`.
+It prints the absolute path without
+showing its contents and never overwrites an existing file. Edit that file to replace every `CHANGEME`.
 Set `$env:ENV_FILE` to its absolute path before running the remaining commands;
 the same path must be used for all of them.
 If you have deleted a previous lab and are rebuilding the same approved target,
 you may reuse its existing private file and credentials after verifying that
 the old resources are gone. Do not rerun `all` to repair a still-promoted
 domain. For a second lab alongside the first, use a distinct private file and
-resource group; `init-config.ps1` accepts an absolute `ENV_FILE` path and
-never overwrites it.
+pair of resource groups; pass a distinct root with `-ResourceGroupRoot`.
+`init-config.ps1` also accepts
+an explicit absolute `ENV_FILE` path and never overwrites it. Existing filenames
+remain supported; no configuration files or Azure resource groups are renamed.
+Before creating resources, `deploy.ps1 all` checks both target groups in the
+configured subscription and refuses to proceed if either already exists.
+Use scoped recovery for an existing lab, not `all`.
 
 | Credential | Setting |
 |---|---|
@@ -116,7 +129,7 @@ do not commit the file or recover secrets from deployment logs.
 Run:
 
 ```powershell
-$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
 az login
 ./scripts/validate.ps1
 ./scripts/preflight.ps1 infra
@@ -138,17 +151,17 @@ recovery, rerun only the failed stage and required successors—never rerun
 
 ### Find your lab configuration and passwords
 
-Your `lab.env` file contains the lab configuration and passwords. For new labs,
+Your `<root>.env` file contains the lab configuration and passwords. For new labs,
 use the visible `ArcJumpstart` folder, not a hidden folder. At the end of setup,
 the agent must explicitly give you the **actual full path**, plus instructions
 for finding and opening your file. Do not share or commit its contents.
 
 | Platform | Usual full path (replace the example username) | Find and view the file |
 |---|---|---|
-| macOS | `/Users/alex/ArcJumpstart/lab.env` | In Finder, choose **Go > Home**, then open **ArcJumpstart**. Right-click `lab.env` and choose **Open With > TextEdit** to view it. |
-| Windows native PowerShell | `C:\Users\alex\ArcJumpstart\lab.env` | Paste `C:\Users\alex\ArcJumpstart` into File Explorer's address bar, then open `lab.env` with Notepad. Use the actual path printed by `init-config.ps1`. |
-| Windows with WSL2 | `/home/alex/ArcJumpstart/lab.env` inside WSL; `\\wsl.localhost\Ubuntu\home\alex\ArcJumpstart\lab.env` in Windows for an Ubuntu distro | Paste the folder path `\\wsl.localhost\Ubuntu\home\alex\ArcJumpstart` into File Explorer's address bar and press Enter. Right-click `lab.env` and open it with Notepad to view it. Use the actual distro and username supplied by the agent. |
-| Linux | `/home/alex/ArcJumpstart/lab.env` | Open **Home > ArcJumpstart** in your file manager and open `lab.env` in a text editor. |
+| macOS | `/Users/alex/ArcJumpstart/rg-arc-jumpstart-v2.env` | In Finder, choose **Go > Home**, then open **ArcJumpstart**. Right-click the `.env` file and choose **Open With > TextEdit** to view it. |
+| Windows native PowerShell | `C:\Users\alex\ArcJumpstart\rg-arc-jumpstart-v2.env` | Paste `C:\Users\alex\ArcJumpstart` into File Explorer's address bar, then open the `.env` file with Notepad. Use the actual path printed by `init-config.ps1`. |
+| Windows with WSL2 | `/home/alex/ArcJumpstart/rg-arc-jumpstart-v2.env` inside WSL; `\\wsl.localhost\Ubuntu\home\alex\ArcJumpstart\rg-arc-jumpstart-v2.env` in Windows for an Ubuntu distro | Paste the folder path `\\wsl.localhost\Ubuntu\home\alex\ArcJumpstart` into File Explorer's address bar and press Enter. Right-click the `.env` file and open it with Notepad to view it. Use the actual distro and username supplied by the agent. |
+| Linux | `/home/alex/ArcJumpstart/rg-arc-jumpstart-v2.env` | Open **Home > ArcJumpstart** in your file manager and open the `.env` file in a text editor. |
 
 These are examples, not a way to locate an existing lab automatically. If you
 already use a different `ENV_FILE`, keep using that exact file; do not overwrite

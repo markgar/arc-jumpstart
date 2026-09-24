@@ -9,7 +9,7 @@ Azure identity. Service-principal and unattended onboarding are out of scope.
 Before Arc setup, run the broader provider check:
 
 ```powershell
-$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
 ./scripts/preflight.ps1 full
 ```
 
@@ -26,7 +26,7 @@ If those items are missing, rerun the launcher stage before asking the user to
 connect a guest:
 
 ```powershell
-$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
 ./scripts/deploy.ps1 arc-launchers
 ```
 
@@ -160,13 +160,14 @@ If the launcher is missing, stage it through the supported workstation entry
 point:
 
 ```powershell
-$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
 ./scripts/deploy.ps1 arc-launchers
 ```
 
-Set `ARC_RESOURCE_GROUP` and `ARC_LOCATION` in the private environment file
-to override the defaults. When omitted, they derive as
-`<AZURE_RESOURCE_GROUP>-arc` and `AZURE_LOCATION`. The command creates or
+For new configurations, `RESOURCE_GROUP_ROOT` determines the Arc target:
+`<root>-arc`. Its suffix cannot be overridden. Legacy files without a root
+retain an explicit `ARC_RESOURCE_GROUP` or default to `<AZURE_RESOURCE_GROUP>-arc`.
+Set `ARC_LOCATION` to override its default of `AZURE_LOCATION`. The command creates or
 retains that dedicated resource group, applies
 `ArcSQLServerExtensionDeployment=LicenseOnly`, and stages the launchers. It
 does not connect any guest or begin device-code authentication.

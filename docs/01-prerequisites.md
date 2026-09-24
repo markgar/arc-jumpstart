@@ -76,7 +76,7 @@ assessment, inventory collection, backup, or migration work.
 Create an owner-only copy of `deploy.env.example` with `init-config.ps1` outside
 the repository and set `ENV_FILE` to its absolute path. On Windows, macOS,
 Linux, or WSL2,
-use the visible `$HOME/ArcJumpstart/lab.env` location for new labs, not a hidden
+use the visible `$HOME/ArcJumpstart/<root>.env` location for new labs, not a hidden
 folder. Use unique
 passwords for:
 
@@ -143,10 +143,14 @@ same operating system; do not mix Windows executables with WSL paths.
 Create the private configuration template outside the repository:
 
 ```powershell
-./scripts/init-config.ps1
-$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+$env:ENV_FILE = $null # Clear a previous lab's override before creating a new file.
+./scripts/init-config.ps1 -ResourceGroupRoot rg-arc-jumpstart-v2
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
 ```
 
+Replace the example root with the approved name; initialization uses
+`<root>.env`, `AZURE_RESOURCE_GROUP=<root>-infra`, and
+`ARC_RESOURCE_GROUP=<root>-arc`.
 `init-config.ps1` restricts the visible folder and file to the current owner
 (Windows ACL or Unix modes `700`/`600`) and never overwrites a file. Edit it
 privately; replace `CHANGEME` values without sending passwords to the agent in

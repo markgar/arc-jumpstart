@@ -3,14 +3,18 @@
 ## Configure
 
 ```powershell
-./scripts/init-config.ps1
-$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+$env:ENV_FILE = $null # Clear a previous lab's override before creating a new file.
+./scripts/init-config.ps1 -ResourceGroupRoot rg-arc-jumpstart-v2
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
 # Edit the file privately and replace every CHANGEME.
 ./scripts/validate.ps1
 ./scripts/preflight.ps1 infra
 ```
 
-Keep this file in a visible folder outside the repository. Do not overwrite or
+For new labs, use `$HOME/ArcJumpstart/<root>.env`, substituting the
+approved root for the example above. The infrastructure and Arc resource groups
+are `<root>-infra` and `<root>-arc`. Keep this file in a visible
+folder outside the repository. Do not overwrite or
 silently move an existing lab's configuration. At completion, the agent must
 explicitly present the actual full file path and platform-specific instructions
 to find and view it; see
@@ -40,7 +44,7 @@ learner to construct the environment manually.
 ## Inspect or resume individual stages
 
 ```powershell
-$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
 ./scripts/deploy.ps1 00
 ./scripts/deploy.ps1 10
 ./scripts/deploy.ps1 20-30

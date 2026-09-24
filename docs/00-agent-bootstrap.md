@@ -56,7 +56,9 @@ non-safety setting:
 |---|---|
 | Azure identity | Current authenticated Azure CLI user |
 | Region | `westus2` |
-| Resource group | `rg-arc-jumpstart-v2` |
+| Resource-group root | `rg-arc-jumpstart-v2` |
+| Infrastructure resource group | `rg-arc-jumpstart-v2-infra` |
+| Arc resource group | `rg-arc-jumpstart-v2-arc` |
 | Name prefix | `jsarc` |
 | Host size | `Standard_E16s_v7` |
 | Host data disk | 1 TiB Premium SSD |
@@ -87,14 +89,28 @@ questionnaire.
 
 Keep the configuration in approved durable, owner-only storage outside the
 repository. For new labs on Windows, macOS, Linux, and WSL2, use the visible
-`$HOME/ArcJumpstart/lab.env` location. Do not create configuration in hidden
+`$HOME/ArcJumpstart/<root>.env` location, named after the approved root.
+New labs use `<root>-infra` and `<root>-arc` resource groups.
+Do not create configuration in hidden
 folders. Preserve an existing lab's exact `ENV_FILE`; do not silently move or
 overwrite it. A user-approved alternative for a new lab must also be visible.
 
 ```powershell
-./scripts/init-config.ps1
-$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+$env:ENV_FILE = $null # Clear a previous lab's override before creating a new file.
+./scripts/init-config.ps1 -ResourceGroupRoot rg-arc-jumpstart-v2
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
 ```
+
+Suggest `rg-arc-jumpstart-v2`, but let the user choose the approved root.
+Initialization records `RESOURCE_GROUP_ROOT`; the runtime derives
+`AZURE_RESOURCE_GROUP=<root>-infra` and `ARC_RESOURCE_GROUP=<root>-arc`.
+The suffixes are fixed for root-based configurations.
+An explicit `ENV_FILE` overrides the generated path; existing files,
+including `lab.env`, are never renamed or overwritten.
+Files without `RESOURCE_GROUP_ROOT` retain their existing explicit targets.
+Before creating any resources, `deploy.ps1 all` checks both target groups in
+the configured subscription. An existing group or failed lookup blocks a fresh
+deployment; use the documented stage-specific recovery path instead.
 
 Populate it without displaying secret values. It contains literal `KEY=value`
 data, not shell code: do not `source` it, add `export`, or surround values with
@@ -159,7 +175,7 @@ questions promptly. On a status request, perform one bounded query and return
 the result:
 
 ```powershell
-$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
 ./scripts/lab.ps1 build-status
 ```
 

@@ -55,9 +55,15 @@ the next build.
    Confirm the user's approved Azure target and cost/destructive-action scope.
 2. Obtain missing authentication/configuration inputs securely. Do not overwrite
    an existing environment file or reuse a shared resource group implicitly.
-   For new labs, use `$HOME/ArcJumpstart/lab.env` (via `init-config.ps1`) in a
-   visible, owner-only folder outside the repository; do not create
+   For new labs, use `$HOME/ArcJumpstart/<root>.env` (via
+   `init-config.ps1 -ResourceGroupRoot <root>`) in a visible, owner-only
+   folder outside the repository; do not create
    configuration in hidden folders.
+   New configuration targets are `<root>-infra` and `<root>-arc`; preserve
+   existing configuration paths and resource-group names.
+   Suggest `rg-arc-jumpstart-v2` as the root, but allow the user to choose another.
+   Keep the suffixes fixed. `deploy.ps1 all` refuses to create a new lab if
+   either target group exists in the configured subscription.
 3. For a new lab, run from the repository root:
 
    ```powershell

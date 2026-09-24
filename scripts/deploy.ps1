@@ -330,6 +330,7 @@ try {
     if ($identity.Output -ne 'user') {
         throw 'This lab requires Azure CLI authentication as an interactive user.'
     }
+    if ($Stage -eq 'all') { Assert-NewLabResourceGroups $settings }
     [void](Invoke-LabAz @('group', 'create', '--name', $settings.AZURE_RESOURCE_GROUP,
         '--location', $settings.AZURE_LOCATION, '--output', 'none'))
     if ($Stage -eq 'bastion') {

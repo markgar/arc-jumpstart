@@ -93,7 +93,7 @@ relationships:
 Run the supported export after the assessment and Arc inventory are current:
 
 ```powershell
-$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
 ./scripts/lab.ps1 inventory
 ```
 

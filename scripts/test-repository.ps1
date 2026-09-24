@@ -51,7 +51,7 @@ foreach ($relative in @('README.md', 'AGENTS.md', 'docs/00-agent-bootstrap.md',
     'docs/01-prerequisites.md', 'docs/02-deploy.md', 'scripts/README.md',
     'skills/arc-jumpstart/SKILL.md')) {
     $text = [System.IO.File]::ReadAllText((Join-Path $root $relative))
-    Assert-Contains $text 'ArcJumpstart/lab.env' $relative
+    Assert-Contains $text 'ArcJumpstart/<root>.env' $relative
     Assert-NotContains $text '.config/arc-jumpstart' $relative
 }
 foreach ($relative in @('README.md', 'AGENTS.md', 'docs/00-agent-bootstrap.md',

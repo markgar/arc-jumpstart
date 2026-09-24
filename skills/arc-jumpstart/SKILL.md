@@ -1,6 +1,6 @@
 ---
 name: arc-jumpstart
-description: Build, monitor, recover, and hand off the Azure Arc Jumpstart environment in this repository. Use when a user wants to create or operate the lab, reports a failed stage, or needs guidance for Arc setup, assessment, inventory modeling, or a simple SQL Managed Instance migration.
+description: Build, monitor, recover, and hand off the Azure Arc Jumpstart environment in this repository. Use when a user wants to create or operate the lab, reports a failed stage or Bastion/RDP trouble (including "my Bastion is not working well now"), or needs guidance for Arc setup, assessment, inventory modeling, or a simple SQL Managed Instance migration.
 license: MIT
 ---
 
@@ -61,6 +61,34 @@ Use one-shot progress checks only when useful:
 - Never rerun `deploy.ps1 all` against an already promoted domain.
 - Preserve working guests, disks, databases, identities, and active operations
   unless the user explicitly approves a scoped rebuild or deletion.
+
+### Bastion disconnects after Windows first login
+
+If the Hyper-V host's Bastion RDP session drops or becomes unstable, ask:
+"At first login, did Windows ask 'Do you want to allow your PC to be
+discoverable by other PCs and devices on this network?' What did you select:
+Yes, No, or nothing?" In one observed session, selecting **Yes** was followed
+by an immediate disconnect and a successful reconnection; this does not prove
+the prompt caused other Bastion failures. **Yes** chooses a discoverable
+**Private** network; **No** chooses the less-discoverable **Public** profile.
+The profile affects Windows Firewall rules and may affect RDP (TCP 3389).
+
+1. If Bastion provisioning itself failed, use
+   [Bastion troubleshooting](../../docs/06-troubleshooting-cleanup.md#bastion-is-slow-or-failed);
+   do not change the host profile. If RDP reconnected, avoid changing a
+   working host merely because the prompt appeared.
+2. For continued RDP trouble after the prompt, inspect the host's current
+   network profile and the effective Windows Firewall RDP rules for that
+   profile, then check the VM NIC/subnet NSG's TCP 3389 access from
+   `AzureBastionSubnet`. Do not infer the current profile from the answer
+   alone or treat the prompt as a confirmed root cause.
+3. Before a user-approved profile change, ensure alternate Azure Run Command
+   access and that RDP is allowed for the intended profile; changing the
+   active host interface can drop Bastion again. If **Yes** changed the host
+   to Private and returning to Public is appropriate, follow the targeted
+   [host profile recovery steps](../../docs/06-troubleshooting-cleanup.md#bastion-is-slow-or-failed)
+   and verify reconnection. Never blanket-disable Windows Firewall or change
+   Azure networking to compensate for an unverified profile issue.
 
 ## User handoff and workshop boundary
 

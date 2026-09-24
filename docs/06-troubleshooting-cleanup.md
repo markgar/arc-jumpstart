@@ -14,6 +14,50 @@ Builds started before this separation still use their submitted stage `00`
 template. See [independent Bastion access](02-deploy.md#independent-bastion-access)
 for that boundary and the standalone commands.
 
+If Bastion RDP to the **Hyper-V host** disconnected after first login, ask
+whether the user saw "Do you want to allow your PC to be discoverable by other
+PCs and devices on this network?" and selected **Yes**, **No**, or nothing.
+**Yes** selects the discoverable **Private** network profile; **No** selects
+the less-discoverable **Public** profile. The profile changes which Windows
+Firewall rules apply and may affect RDP (TCP 3389). In one observed session,
+**Yes** was followed by an immediate Bastion disconnect, then a successful
+reconnection. That sequence does not establish the cause of persistent or
+unrelated Bastion instability. If RDP is working again, no profile change is
+needed solely because this prompt appeared.
+
+For continuing connection trouble, inspect the host's actual profile before
+changing it on the host:
+
+```powershell
+Get-NetConnectionProfile | Select-Object InterfaceAlias, InterfaceIndex, NetworkCategory
+```
+
+Check the effective Windows Firewall Remote Desktop rules for that profile and
+the host VM's NIC/subnet NSG allowance for TCP 3389 from
+`AzureBastionSubnet`. Distinguish a failed Bastion deployment from a blocked
+RDP session; do not retry Bastion deployment or modify Azure networking just
+because the host profile changed.
+
+If the host is now **Private** and the user wants to undo that choice, first
+ensure alternate **Azure Run Command** access and that Windows Firewall allows
+RDP for the intended **Public** profile. Changing the active interface's
+profile can drop the Bastion session. With the user's approval, on the host
+use **Settings > Network & Internet > Ethernet > connected network > Network
+profile > Public**, or identify the host-facing interface by its
+`InterfaceIndex` above, set `$hostInterfaceIndex` to that verified index, and
+run:
+
+```powershell
+Set-NetConnectionProfile -InterfaceIndex $hostInterfaceIndex -NetworkCategory Public
+Get-NetConnectionProfile -InterfaceIndex $hostInterfaceIndex
+```
+
+Do not apply the command to every adapter or to a `DomainAuthenticated`
+profile (which is assigned automatically). Verify the host reports **Public**
+and reconnect via Bastion; if access fails, use the alternate Run Command
+path to inspect the firewall/profile rather than disabling the firewall. See Microsoft's
+[Set-NetConnectionProfile reference](https://learn.microsoft.com/en-us/powershell/module/netconnection/set-netconnectionprofile).
+
 ## Read stage logs
 
 For concise live progress while a stage is running:

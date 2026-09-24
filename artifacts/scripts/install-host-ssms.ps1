@@ -23,9 +23,9 @@ function Assert-SsmsBootstrapper {
     param([string]$Path)
     Assert-MicrosoftSignature $Path
     $version = (Get-Item -LiteralPath $Path).VersionInfo
+    # The SSMS 22 bootstrapper reports Visual Studio Installer major 18, not SSMS major 22.
     if ($version.OriginalFilename -ine 'vs_ssms.exe' -or
-        $version.ProductName -ne 'Microsoft SQL Server Management Studio' -or
-        $version.ProductMajorPart -ne 22) {
+        $version.ProductName -ne 'Microsoft SQL Server Management Studio') {
         throw "Unexpected SSMS 22 bootstrapper identity: $Path"
     }
 }

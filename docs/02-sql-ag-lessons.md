@@ -74,6 +74,18 @@ them. The original successful installations were sequential; the later
 parallel implementation subsequently passed on three fresh guests during the
 clean-room recovery recorded in [the clean-room lessons](02-clean-room-lessons.md).
 
+On a September 23, 2026 Windows PowerShell build, stage `45` installed and
+verified both AG engines but the fresh standalone guest stopped before Setup:
+CBS reported `RebootPending`. Stage `45` now checks only selected SQL guests
+before copying media. If a guest has no SQL service, instance registration or
+orphaned instance files, and no active installer or legacy SQL task, one planned
+reboot clears CBS/Windows Update pending flags before Setup. It waits for a
+new boot and checks again; persistent flags fail without another pre-setup
+reboot. Healthy engines are verified without this reboot, and partial installs
+still require diagnosis. SQL Setup exit `3010` retains its separate bounded
+post-setup reboot. This change has local regression coverage; a live rerun
+must confirm the recovery before calling this build successful.
+
 ### Windows can be reachable while setup is unfinished
 
 Heartbeat, working PowerShell Direct, unique SIDs, functioning AD and even
@@ -244,6 +256,10 @@ Windows PowerShell transcript startup headers included the process command
 line, including credential arguments. The `stage-log` viewer now suppresses
 startup headers before selecting the tail, redacts configured sensitive values
 from both output streams and preserves the command's exit status.
+The generated read-only script is sent to Azure CLI as a private, temporary
+`--scripts @file.ps1` (then removed), so Windows forwards the entire script
+rather than only its first line. Structured progress/status calls use
+`--only-show-errors` so CLI warnings do not corrupt JSON parsing.
 
 This is display protection, not sanitization of stored transcripts. Do not
 publish raw host logs. Review exports and rotate credentials if unredacted

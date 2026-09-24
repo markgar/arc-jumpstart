@@ -411,12 +411,39 @@ if ((Parse-Script $downloadText).Find({
     $script:guestDeadlineUtc = $null
 }
 
-# Reboots happen after synchronous completion, never for a PATH refresh.
+# Only fresh idle guests may reboot before setup; completed setup may request one more.
 & {
     $credential = [pscredential]::new('Administrator', (ConvertTo-SecureString dummy -AsPlainText -Force))
     $RunId = 'test'; $script:payload = @('cached.iso')
-    function Wait-SqlGuest { param($VMName, $PreviousBoot) 'boot' }
-    function Invoke-SqlGuest { param($VMName, $ScriptBlock) if ($ScriptBlock.ToString().Contains('shutdown.exe')) { $script:reboots++ } }
+    function Wait-SqlGuest {
+        param($VMName, $PreviousBoot)
+        $boot = "boot-$($script:reboots)"
+        if ($PreviousBoot -and $PreviousBoot -eq $boot) { throw 'Reboot did not change boot time.' }
+        $boot
+    }
+    function Invoke-SqlGuest {
+        param($VMName, $ScriptBlock)
+        if ($ScriptBlock.ToString().Contains('shutdown.exe')) {
+            $script:reboots++
+            if (-not $script:persistentPending) {
+                $script:pending = $false
+                $script:updatePending = $false
+            }
+        }
+        else { & $ScriptBlock }
+    }
+    function Get-ScheduledTask { param($TaskName, $ErrorAction) if ($script:activeTask) { @{ State = 'Running' } } }
+    function Get-Process { param($Name, $ErrorAction) if ($script:activeInstaller) { @{ Name = 'setup' } } }
+    function Get-Service { param($Name, $ErrorAction) if ($script:installed) { @{ Name = 'MSSQLSERVER' } } }
+    function Get-ItemProperty { param($Path) [pscustomobject]@{ MSSQLSERVER = 'MSSQL17.MSSQLSERVER' } }
+    function Get-ChildItem { param($Path, [switch]$Directory, $ErrorAction) if ($script:partialFiles) { 'orphan' } }
+    function Test-Path {
+        param($Path)
+        if ($Path -like '*Instance Names\SQL') { return $script:installed }
+        if ($Path -like '*RebootPending') { return $script:pending }
+        if ($Path -like '*RebootRequired') { return $script:updatePending }
+        $false
+    }
     function Copy-SqlPayload { param($VMName, $Files) }
     function New-PSSession { param($VMName, $Credential, $ErrorAction) 'session' }
     function Remove-PSSession { param($Session, $ErrorAction) $script:closed++ }
@@ -428,17 +455,52 @@ if ((Parse-Script $downloadText).Find({
         @{ Status = $script:statuses.Dequeue() }
     }
     $script:reboots = 0; $script:closed = 0; $script:invokeFailure = $false
+    $script:pending = $false; $script:updatePending = $false; $script:persistentPending = $false
+    $script:activeTask = $false; $script:activeInstaller = $false
+    $script:installed = $false; $script:partialFiles = $false
     $script:statuses = [Collections.Generic.Queue[string]]::new()
     $script:statuses.Enqueue('Verified')
     Complete-SqlGuest JS-SQL-01
     Assert-Equal $script:reboots 0 'Healthy verification does not reboot'
     Assert-Equal $script:closed 1 'Release session only after return'
+    $script:pending = $true
+    $script:statuses.Enqueue('Verified')
+    Complete-SqlGuest JS-SQL-01
+    Assert-Equal $script:reboots 1 'Fresh idle guest receives one pre-setup reboot'
+    Assert-Equal $script:statuses.Count 0 'Guest verification follows cleared reboot flag'
+    $script:updatePending = $true
+    $script:statuses.Enqueue('Verified')
+    Complete-SqlGuest JS-SQL-01
+    Assert-Equal $script:reboots 2 'Windows Update reboot flag also triggers pre-setup reboot'
+    $script:pending = $true; $script:persistentPending = $true
+    Assert-Throws { Complete-SqlGuest JS-SQL-01 } 'still requires a Windows servicing reboot'
+    Assert-Equal $script:reboots 3 'Persistent flag causes no reboot loop'
+    $script:persistentPending = $false
+    foreach ($guard in @('activeTask', 'activeInstaller', 'installed', 'partialFiles')) {
+        $script:pending = $true
+        Set-Variable -Name $guard -Value $true -Scope Script
+        if ($guard -eq 'installed') {
+            $script:statuses.Enqueue('Verified')
+            Complete-SqlGuest JS-SQL-01
+            Assert-Equal $script:statuses.Count 0 'Installed engine still runs normal verification'
+        }
+        else {
+            $message = if ($guard -eq 'partialFiles') { 'Orphaned SQL instance files' } else { 'active' }
+            Assert-Throws { Complete-SqlGuest JS-SQL-01 } $message
+        }
+        Assert-Equal $script:reboots 3 "Never reboot with $guard"
+        Set-Variable -Name $guard -Value $false -Scope Script
+    }
+    $script:pending = $false
     $script:statuses.Enqueue('RebootRequired'); $script:statuses.Enqueue('Verified')
     Complete-SqlGuest JS-SQL-01
-    Assert-Equal $script:reboots 1 '3010 triggers one reconnect and verification'
+    Assert-Equal $script:reboots 4 '3010 triggers one reconnect and verification'
+    $script:statuses.Enqueue('RebootRequired'); $script:statuses.Enqueue('RebootRequired')
+    Assert-Throws { Complete-SqlGuest JS-SQL-01 } 'exceeded the bounded installer reboot count'
+    Assert-Equal $script:reboots 5 'Second installer reboot request must not reboot again'
     $script:invokeFailure = $true
     Assert-Throws { Complete-SqlGuest JS-SQL-01 } 'native failure 1603'
-    Assert-Equal $script:reboots 1 'Never reboot on native failure'
+    Assert-Equal $script:reboots 5 'Never reboot on native failure'
     $script:phaseDeadlineUtc = $null
 }
 & {

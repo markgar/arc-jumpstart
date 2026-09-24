@@ -119,7 +119,7 @@ function Show-LabStage {
     $hostArgs = @('--resource-group', $Settings.AZURE_RESOURCE_GROUP,
         '--vm-name', "$($Settings.NAME_PREFIX)-host")
     if ($Command -eq 'build-status') {
-        $result = Invoke-LabAz ($args + @('list') + $hostArgs + @('--expand', 'instanceView', '--output', 'json'))
+        $result = Invoke-LabAz ($args + @('list') + $hostArgs + @('--expand', 'instanceView', '--output', 'json', '--only-show-errors'))
         $commands = @(ConvertFrom-Json -InputObject $result.Output)
         $observed = @()
         foreach ($item in $commands) {
@@ -165,7 +165,7 @@ function Show-LabStage {
         $result = Invoke-LabAz ($args + @('show') + $hostArgs +
             @('--name', $labCommands[$Number], '--expand', 'instanceView',
               '--query', '{state:instanceView.executionState,start:instanceView.startTime,end:instanceView.endTime,output:instanceView.output,error:instanceView.error}',
-              '--output', 'json'))
+              '--output', 'json', '--only-show-errors'))
         Show-StageProgress $Number (ConvertFrom-Json -InputObject $result.Output) $Settings
         return
     }
@@ -193,9 +193,20 @@ Write-Host ('SizeBytes={0}' -f `$log.Length)
 Get-Content -LiteralPath `$log.FullName -ErrorAction Stop |
     Remove-TranscriptStartupHeader | Select-Object -Last 200
 "@
-    $result = Invoke-LabAz @('vm', 'run-command', 'invoke', '--resource-group',
-        $Settings.AZURE_RESOURCE_GROUP, '--name', "$($Settings.NAME_PREFIX)-host",
-        '--command-id', 'RunPowerShellScript', '--scripts', $script,
-        '--query', 'value[0].message', '--output', 'tsv')
+    $path = Join-Path ([System.IO.Path]::GetTempPath()) ("arc-jumpstart-stage-log-{0}.ps1" -f [guid]::NewGuid())
+    try {
+        [void][System.IO.File]::Create($path).Dispose()
+        Protect-LabPath $path
+        [System.IO.File]::WriteAllText($path, $script, [System.Text.UTF8Encoding]::new($false))
+        $result = Invoke-LabAz @('vm', 'run-command', 'invoke', '--resource-group',
+            $Settings.AZURE_RESOURCE_GROUP, '--name', "$($Settings.NAME_PREFIX)-host",
+            '--command-id', 'RunPowerShellScript', '--scripts', "@$path",
+            '--query', 'value[0].message', '--output', 'tsv', '--only-show-errors')
+    }
+    finally {
+        if (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+        }
+    }
     Write-Host (Protect-LabOutput $result.Output $Settings)
 }

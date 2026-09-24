@@ -112,6 +112,7 @@ not be repeated blindly on a fresh or already-working lab.
 **Stage 45 SQL installation fails**
 
 - Read `./scripts/lab.ps1 stage-log 45` and SQL Setup logs under `C:\Program Files\Microsoft SQL Server\170\Setup Bootstrap\Log` inside the affected guest.
+- If a fresh SQL guest reports a CBS or Windows Update reboot pending before Setup, rerun only stage `45` after all prior workers are terminal. It plans one reboot only for that fresh idle guest and verifies the pending flag cleared. A persistent flag, active installer/task, or partial instance requires diagnosis; do not delete reboot markers or rebuild healthy engines.
 - Confirm Microsoft download endpoints are reachable from the host and `SQL_DOWNLOAD_URL` points to SQL Server 2025 Enterprise Developer media.
 - Do not repair a cloned ArcBox SQL image in place: stage `40` must create the SQL guests from the Windows-only parent before stage `45` installs SQL.
 - Correct the repository configuration or installer failure, then rerun stage `45`. Existing healthy instances are retained; conflicting or unhealthy instances require investigation.

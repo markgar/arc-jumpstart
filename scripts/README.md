@@ -118,7 +118,10 @@ Use `stage-log` for the longer 200-line host-transcript tail after a stage is
 terminal and the VM agent is free. It launches a read-only Action Run Command,
 so it is intentionally not the live-progress mechanism. Both views suppress
 transcript startup headers and redact current configured secrets before
-display. They do not rewrite the raw host transcript, which remains sensitive.
+display. `stage-log` supplies its full script through a restricted local
+temporary file (`--scripts @file.ps1`) and deletes it after invocation, including
+on CLI failure. They do not rewrite the raw host transcript, which remains
+sensitive.
 
 All three operational wrappers support an alternative environment file:
 

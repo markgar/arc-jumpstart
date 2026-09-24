@@ -50,7 +50,7 @@ SQL Managed Instance.
 Use SQL authentication for this disposable exercise only if Microsoft Entra
 administration is not already configured. Store the administrator credential
 in approved owner-only storage outside the repository. Never put it in
-`deploy.env`, source control, chat, or command output.
+the lab's private `ENV_FILE`, source control, chat, or command output.
 
 Wait for the managed instance to report **Ready** before continuing.
 

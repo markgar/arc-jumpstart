@@ -8,8 +8,9 @@ Azure identity. Service-principal and unattended onboarding are out of scope.
 
 Before Arc setup, run the broader provider check:
 
-```bash
-./scripts/preflight.sh full
+```powershell
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+./scripts/preflight.ps1 full
 ```
 
 ## Verify the prepared Arc target
@@ -24,8 +25,9 @@ The agent should already have:
 If those items are missing, rerun the launcher stage before asking the user to
 connect a guest:
 
-```bash
-ENV_FILE=/absolute/private/path/lab.env ./scripts/deploy.sh arc-launchers
+```powershell
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+./scripts/deploy.ps1 arc-launchers
 ```
 
 The lab installs SQL Server 2025 Enterprise Developer. Arc inventory reports
@@ -93,7 +95,7 @@ azcmagent check --location westus2
 
 On Linux, run the same check with `sudo`:
 
-```bash
+```text
 sudo azcmagent check --location westus2
 ```
 
@@ -157,8 +159,9 @@ device code.
 If the launcher is missing, stage it through the supported workstation entry
 point:
 
-```bash
-ENV_FILE=/absolute/private/path/lab.env ./scripts/deploy.sh arc-launchers
+```powershell
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+./scripts/deploy.ps1 arc-launchers
 ```
 
 Set `ARC_RESOURCE_GROUP` and `ARC_LOCATION` in the private environment file
@@ -168,7 +171,7 @@ retains that dedicated resource group, applies
 `ArcSQLServerExtensionDeployment=LicenseOnly`, and stages the launchers. It
 does not connect any guest or begin device-code authentication.
 
-`deploy.sh all` runs this staging step by default after stage `60`. Set
+`deploy.ps1 all` runs this staging step by default after stage `60`. Set
 `PREPARE_ARC_LAUNCHERS=false` before deployment to omit it. Staging is inert:
 it does not install the agent, start authentication, or connect a machine.
 
@@ -179,7 +182,7 @@ it does not install the agent, start authentication, or connect a machine.
 
 Connect to `JS-UBUNTU-01` from the Hyper-V console and sign in as `jumpstart`. The external VHDX retains its original Linux hostname, so rename it before onboarding:
 
-```bash
+```text
 sudo hostnamectl set-hostname JS-UBUNTU-01
 sudo reboot
 ```
@@ -189,7 +192,7 @@ stop before its connect command, and run the required
 `sudo azcmagent check --location <arc-region>` gate. Resolve any required
 endpoint failure before running the generated connect command with `sudo`.
 
-```bash
+```text
 sudo azcmagent show
 sudo azcmagent check
 systemctl status himdsd
@@ -217,7 +220,7 @@ Arc-based Azure Migrate discovery requires Connected Machine agent version 1.46 
 azcmagent version
 ```
 
-```bash
+```text
 azcmagent version
 ```
 

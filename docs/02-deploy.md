@@ -2,15 +2,12 @@
 
 ## Configure
 
-```bash
-ENV_FILE="$HOME/ArcJumpstart/lab.env"
-mkdir -p -m 700 "$(dirname "$ENV_FILE")"
-if [[ ! -f "$ENV_FILE" ]]; then
-  install -m 600 deploy.env.example "$ENV_FILE"
-fi
-${EDITOR:-vi} "$ENV_FILE"
-./scripts/validate.sh
-ENV_FILE="$ENV_FILE" ./scripts/preflight.sh infra
+```powershell
+./scripts/init-config.ps1
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+# Edit the file privately and replace every CHANGEME.
+./scripts/validate.ps1
+./scripts/preflight.ps1 infra
 ```
 
 Keep this file in a visible folder outside the repository. Do not overwrite or
@@ -26,11 +23,14 @@ The wrapper uses your signed-in Entra user to deploy Azure resources. Each Power
 Infrastructure preparation belongs to the automation, not to the learner.
 For a new lab with validated configuration and an authenticated Azure CLI user:
 
-```bash
-./scripts/validate.sh &&
-ENV_FILE="$ENV_FILE" ./scripts/preflight.sh infra &&
-ENV_FILE="$ENV_FILE" ./scripts/deploy.sh all
+```powershell
+./scripts/validate.ps1
+./scripts/preflight.ps1 infra
+./scripts/deploy.ps1 all
 ```
+
+Stop if either prerequisite command fails. PowerShell 7 and Azure CLI work on
+Windows, macOS and Linux without WSL.
 
 The [agent bootstrap runbook](00-agent-bootstrap.md) defines the inputs,
 monitoring/recovery workflow and required handoff state. Use the individual
@@ -39,14 +39,15 @@ learner to construct the environment manually.
 
 ## Inspect or resume individual stages
 
-```bash
-ENV_FILE="$ENV_FILE" ./scripts/deploy.sh 00
-ENV_FILE="$ENV_FILE" ./scripts/deploy.sh 10
-ENV_FILE="$ENV_FILE" ./scripts/deploy.sh 20-30
-ENV_FILE="$ENV_FILE" ./scripts/deploy.sh 40
-ENV_FILE="$ENV_FILE" ./scripts/deploy.sh 45
-ENV_FILE="$ENV_FILE" ./scripts/deploy.sh 50
-ENV_FILE="$ENV_FILE" ./scripts/deploy.sh 60
+```powershell
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+./scripts/deploy.ps1 00
+./scripts/deploy.ps1 10
+./scripts/deploy.ps1 20-30
+./scripts/deploy.ps1 40
+./scripts/deploy.ps1 45
+./scripts/deploy.ps1 50
+./scripts/deploy.ps1 60
 ```
 
 Stage `40` must wait for genuine Windows first-boot/OOBE completion before
@@ -70,7 +71,7 @@ and Microsoft's [ProductKey setting](https://learn.microsoft.com/en-us/windows-h
 
 Each PowerShell stage runs through Azure VM Run Command. Azure retains recent command output, and the host retains full transcripts under `C:\ArcJumpstart\Logs`. Stages `30` and `45` use asynchronous Run Command for image downloads and SQL installations; the deployment wrapper polls the command until it reaches a terminal state and verifies exit code `0` before returning.
 
-Stage `30` downloads approximately 38 GiB of Windows and Ubuntu images. Source throttling and regional network conditions affect download time. Azure does not send the operator a separate completion notification. Keep the `./scripts/deploy.sh 30` terminal open and wait for it to return successfully before starting stage `40`.
+Stage `30` downloads approximately 38 GiB of Windows and Ubuntu images. Source throttling and regional network conditions affect download time. Azure does not send the operator a separate completion notification. Keep the `./scripts/deploy.ps1 30` terminal open and wait for it to return successfully before starting stage `40`.
 
 `all` and `20-30` start those image downloads before configuring the independent
 internal network, then join image completion before creating guests. Individual
@@ -110,7 +111,7 @@ their installers or allow stage `50` to proceed. Healthy instances are retained
 on a retry. Shared host CPU and disk bandwidth mean three simultaneous installs
 are not guaranteed to take the same time as a single install.
 
-Running stage `45` accepts Microsoft's installer license terms. Developer edition is for development, testing, and training, not production. The host must be able to reach the Microsoft download endpoints and any redirect destinations. Guest installation runs synchronously as the guest's local Administrator through a held PowerShell Direct session and preserves setup diagnostics; it does not create an installation scheduled task. The stage checks SQL queries and sysadmin access before succeeding; a running Windows guest or SQL service alone is insufficient. A rerun verifies and retains a healthy installation rather than reinstalling it. A conflicting or broken existing instance is reported for investigation, not silently overwritten. Use `./scripts/lab.sh stage-log 45` for the host log.
+Running stage `45` accepts Microsoft's installer license terms. Developer edition is for development, testing, and training, not production. The host must be able to reach the Microsoft download endpoints and any redirect destinations. Guest installation runs synchronously as the guest's local Administrator through a held PowerShell Direct session and preserves setup diagnostics; it does not create an installation scheduled task. The stage checks SQL queries and sysadmin access before succeeding; a running Windows guest or SQL service alone is insufficient. A rerun verifies and retains a healthy installation rather than reinstalling it. A conflicting or broken existing instance is reported for investigation, not silently overwritten. Use `./scripts/lab.ps1 stage-log 45` for the host log.
 
 Stage `45` installs `SQLENGINE` only, not `AZUREEXTENSION`. Stages `00` through
 `60` prepare the infrastructure and sample workloads; they do not install or
@@ -167,25 +168,26 @@ stage `60` management dependencies are ready. Do not run it concurrently with
 stage `45` or another SQL installer. Existing or partial instances are never
 automatically repaired, upgraded, or replaced.
 
-### Check SQL media locally before deployment
+### Optional local SQL media check
 
 The SQL downloads page offers a small interactive downloader, not the full installation media. Stage `45` instead downloads the full Enterprise Developer ISO directly from Microsoft and verifies its published length and SHA-256. The source URL, size (`1265688576` bytes), and checksum were obtained from the Enterprise Developer ISO manifest embedded in Microsoft's signed `SQL2025-SSEI-EntDev.exe`. Changing releases requires updating those values together; stage `45` rejects other media, including Evaluation and Standard Developer.
 
-This check runs on macOS, Linux, or Windows with Python, without executing the installer. Choose a new output path outside the repository:
+To inspect the media locally without executing the installer, choose a **new**
+path outside the repository and run:
 
-```bash
-python3 scripts/check-sql-media.py \
-  --url 'https://download.microsoft.com/download/dea8c210-c44a-4a9d-9d80-0c81578860c5/ENU/SQLServer2025-x64-ENU-EntDev.iso' \
-  --output /tmp/SQLServer2025-x64-ENU-EntDev.iso \
-  --sha256 f78f869d44e8c2cbf93be16ce6ea52dd811636f046ded29e7a74dd1352134851
+```powershell
+./scripts/check-sql-media.ps1 `
+  -Url 'https://download.microsoft.com/download/dea8c210-c44a-4a9d-9d80-0c81578860c5/ENU/SQLServer2025-x64-ENU-EntDev.iso' `
+  -Output (Join-Path $HOME 'ArcJumpstart/SQLServer2025-x64-ENU-EntDev.iso') `
+  -Sha256 'f78f869d44e8c2cbf93be16ce6ea52dd811636f046ded29e7a74dd1352134851'
 ```
 
-The command downloads the entire file, rejects incomplete or non-ISO content,
-and verifies the checksum before publishing the output file. It does not prove
-Windows setup, SQL edition, or login readiness; stage `45` checks those on the
-guests.
+The PowerShell checker requires HTTPS, verifies the full length, ISO/PE
+structure and supplied hash, and never overwrites an existing output. Stage
+`45` independently checks the downloaded media before installation, then
+verifies SQL edition and login readiness on the guests.
 
-Do not start the next numbered stage until its required predecessor reports success. Bastion is not a predecessor. If a host-script stage fails, run `./scripts/lab.sh stage-log <stage>`, correct the cause in the repository, and rerun only that number.
+Do not start the next numbered stage until its required predecessor reports success. Bastion is not a predecessor. If a host-script stage fails, run `./scripts/lab.ps1 stage-log <stage>`, correct the cause in the repository, and rerun only that number.
 
 ## Independent Bastion access
 
@@ -199,8 +201,8 @@ infrastructure build.
 If access was omitted or its independent deployment failed, submit/retry it
 without touching the working host or guests:
 
-```bash
-./scripts/deploy.sh bastion
+```powershell
+./scripts/deploy.ps1 bastion
 ```
 
 This explicitly requests Bastion regardless of `DEPLOY_BASTION`, and returns
@@ -288,11 +290,11 @@ needs recovery; do not rerun `all`.
 
 ## Stage 60 prerequisites and safety checks
 
-Read the [AG build sequence and lessons learned](02-sql-ag-lessons.md) for the
+Read the [AG build sequence and lessons learned](02-sql-ag-lessons.md) for
 implementation details, permanent fixes, recovery boundaries, and evidence.
 
 Complete the [domain-readiness checks](02-domain-controller.md#verify-the-domain-and-members)
-before running `./scripts/deploy.sh 60`. This stage requires working domain-admin
+before running `./scripts/deploy.ps1 60`. This stage requires working domain-admin
 credentials and HTTPS access from the host to `cdn.powershellgallery.com`.
 
 Stage `60` verifies completed Windows setup, SQL and update readiness, native

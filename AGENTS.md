@@ -37,8 +37,13 @@ single-database migration to Azure SQL Managed Instance.
 - [Infrastructure map](infra/README.md): Bicep stages, execution boundaries and
   persistence.
 - [Script commands](scripts/README.md): supported entry points and diagnostics.
-- [AG lessons](docs/02-sql-ag-lessons.md): proven fixes, one-time recovery actions
-  and remaining evidence gaps.
+- [AG lessons](docs/02-sql-ag-lessons.md): proven fixes, one-time recovery
+  actions and remaining evidence gaps.
+
+PowerShell 7 and Azure CLI are the supported cross-platform deployment tools.
+On Windows, run `scripts/*.ps1` directly from this checkout; WSL2 is not
+required. Use the PowerShell entry points for deployment and
+recovery on Windows, macOS, or Linux.
 
 Do not depend on an earlier conversation, session artifact or a hand-repaired
 VM. The repository must contain the implementation and instructions needed for
@@ -50,16 +55,18 @@ the next build.
    Confirm the user's approved Azure target and cost/destructive-action scope.
 2. Obtain missing authentication/configuration inputs securely. Do not overwrite
    an existing environment file or reuse a shared resource group implicitly.
-   For new labs, use `$HOME/ArcJumpstart/lab.env` in a visible, owner-only
-   folder outside the repository; do not create configuration in hidden folders.
+   For new labs, use `$HOME/ArcJumpstart/lab.env` (via `init-config.ps1`) in a
+   visible, owner-only folder outside the repository; do not create
+   configuration in hidden folders.
 3. For a new lab, run from the repository root:
 
-   ```bash
-   ./scripts/validate.sh &&
-   ./scripts/preflight.sh infra &&
-   ./scripts/deploy.sh all
+   ```powershell
+   ./scripts/validate.ps1
+   ./scripts/preflight.ps1 infra
+   ./scripts/deploy.ps1 all
    ```
 
+   Proceed to the next command only after the prior one succeeds.
 4. Keep deployment execution separate from the conversation. Run the full
    validation/preflight/deployment chain in a dedicated visible terminal or an
    asynchronous process provided by the agent host. Do not hold the agent turn
@@ -76,10 +83,10 @@ the next build.
    Bastion is enabled by default and submitted independently after stage `00`.
    Let Azure finish it without polling or a completion gate. Never make a build
    stage or core-readiness handoff wait for it.
-   Prefer saved parallel paths: `all` overlaps `20`/`30`; `deploy.sh 20-30`
+   Prefer saved parallel paths: `all` overlaps `20`/`30`; `deploy.ps1 20-30`
    provides the same overlap during recovery. Do not serialize independent
    work, but do not remove the readiness joins before dependent stages.
-   During a long stage, use `lab.sh build-status` to discover all active
+   During a long stage, use `lab.ps1 build-status` to discover all active
    canonical stages and return their latest timestamped host-side phase
    messages. Use `stage-progress <stage>` when a specific stage is already
    known, and `stage-log` for a longer failure tail after it is terminal. Each
@@ -92,8 +99,9 @@ the next build.
    non-secret resource identifiers, readiness evidence and the learner guides.
    Explicitly present the actual full `ENV_FILE` path and instructions to find
    and view it in the final user-facing handoff, not just in logs. On macOS,
-   include Finder navigation and Open With TextEdit; on Windows, include the
-   full File Explorer path with the actual WSL distro/user and Open With Notepad.
+   include Finder navigation and Open With TextEdit; on native Windows, include
+   the full File Explorer path and Open With Notepad. For WSL, give the actual
+   distro/user path as well.
    Identify the execution host if remote. Explain that the file contains lab
    configuration and passwords; never display its contents.
    State any blockers or unproven outcomes explicitly.
@@ -111,12 +119,13 @@ the next build.
 - Never launch `azcmagent connect` through PowerShell Direct, Run Command or
   another noninteractive channel. Never start a competing check while a connect
   operation is active; wait for it to become terminal before troubleshooting.
-- Never print or commit `deploy.env`, passwords, SAS tokens or registration keys.
-  Use `lab.sh stage-log`; raw Windows transcripts can contain credentials.
+- Never print or commit the private `ENV_FILE`, passwords, SAS tokens or
+  registration keys. Use `lab.ps1 stage-log`; raw Windows transcripts can
+  contain credentials.
 - Never bypass OOBE, licensing, SQL readiness, cluster validation or operation
   completion gates. A zero deployment result alone is not a ready lab.
-- Do not restart `deploy.sh all` against an already-promoted domain to resume a
-  later failure. Stage `40` is not an in-place DC repair tool.
+- Do not restart `deploy.ps1 all` against an already-promoted domain to resume
+  a later failure. Stage `40` is not an in-place DC repair tool.
 - Preserve working guests, shared disk parents, databases, cluster identities and
   active operations. Rebuilding requires a scoped decision, not a retry shortcut.
 - Do not replay historical console keystrokes, registry edits or temporary

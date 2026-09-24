@@ -36,7 +36,7 @@ create that witness, the cluster, or the availability group.
 
 | File | Purpose |
 |---|---|
-| [`scripts/deploy.sh`](../scripts/deploy.sh) | Prerequisite checks, Bicep deployment and execution monitoring |
+| [`scripts/deploy.ps1`](../scripts/deploy.ps1) | Bicep deployment and execution monitoring; run `validate.ps1` and `preflight.ps1 infra` before a new lab |
 | [`infra/stages/50-domain/main.bicep`](../infra/stages/50-domain/main.bicep) | Defaults, secure inputs, embedded script and 90-minute command timeout |
 | [`artifacts/scripts/50-configure-domain.ps1`](../artifacts/scripts/50-configure-domain.ps1) | Host orchestration and guest configuration |
 | [`scripts/test-stage50.ps1`](../scripts/test-stage50.ps1) | Local regression checks for bootstrap ordering, DNS recovery and credentials |
@@ -44,9 +44,11 @@ create that witness, the cluster, or the availability group.
 The domain names, addresses, DNS forwarder and `svc-sql` account name are Bicep
 parameters with defaults. They are **not** environment variables exposed by
 `deploy.env.example`. Changing the lab network or domain requires coordinated
-changes across the relevant stages, not simply adding a variable to `deploy.env`.
+changes across the relevant stages, not simply adding a variable to the private
+`ENV_FILE`.
 
-Configure the following existing inputs in your ignored `deploy.env`:
+Configure the following existing inputs in your owner-only `ENV_FILE` outside
+the repository:
 
 | Input | Meaning |
 |---|---|
@@ -56,7 +58,7 @@ Configure the following existing inputs in your ignored `deploy.env`:
 
 Bicep passes passwords as secure parameters and protected Run Command parameters.
 They are still sensitive credentials handled by the deployment process. Never
-commit `deploy.env`, paste passwords into diagnostics, or include them in agent
+commit the private file, paste passwords into diagnostics, or include them in agent
 prompts. Keep DSRM credentials securely available for recovery.
 
 Raw Windows PowerShell transcripts can still record those arguments in their
@@ -86,8 +88,9 @@ and do not rerun the workgroup-oriented stage `40` against a promoted DC.
 
 From the repository root, with the intended Azure account/subscription selected:
 
-```bash
-./scripts/deploy.sh 50
+```powershell
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+./scripts/deploy.ps1 50
 ```
 
 Run only one stage at a time. Do not start another stage `50` execution while an
@@ -154,15 +157,15 @@ another DNS startup delay.
 
 On the machine where you run Azure CLI, substitute your resource group and host:
 
-```bash
-RESOURCE_GROUP='your-resource-group'
-HOST_NAME='jsarc-host'
-az vm run-command show \
-  --resource-group "$RESOURCE_GROUP" \
-  --vm-name "$HOST_NAME" \
-  --name stage50-domain \
-  --expand instanceView \
-  --query 'instanceView.{state:executionState,exitCode:exitCode,start:startTime,end:endTime,output:output,error:error}' \
+```powershell
+$resourceGroup = 'your-resource-group'
+$hostName = 'jsarc-host'
+az vm run-command show `
+  --resource-group $resourceGroup `
+  --vm-name $hostName `
+  --name stage50-domain `
+  --expand instanceView `
+  --query 'instanceView.{state:executionState,exitCode:exitCode,start:startTime,end:endTime,output:output,error:error}' `
   --output json
 ```
 
@@ -259,7 +262,7 @@ permissions and can restart services or guests where necessary. They are not
 side-effect-free. Conflicting state can fail and require operator investigation.
 The stage is not a domain rename, cross-domain migration, password rotation or
 general-purpose AD repair tool. In particular, changing the SQL account password
-in `deploy.env` does not rotate an already existing AD account, and changing
+in the private `ENV_FILE` does not rotate an already existing AD account, and changing
 `SAFE_MODE_PASSWORD` does not reset DSRM on an existing forest.
 
 ### When rebuilding the DC is preferable

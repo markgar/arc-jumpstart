@@ -15,7 +15,7 @@ You need:
 
 Check the tools:
 
-```bash
+```powershell
 az version
 az bicep version
 az extension add --name resource-graph
@@ -23,25 +23,19 @@ az extension add --name resource-graph
 
 Register the providers used across the infrastructure and labs:
 
-```bash
-for provider in \
-  Microsoft.Compute \
-  Microsoft.Network \
-  Microsoft.Storage \
-  Microsoft.Authorization \
-  Microsoft.ManagedIdentity \
-  Microsoft.HybridCompute \
-  Microsoft.GuestConfiguration \
-  Microsoft.HybridConnectivity \
-  Microsoft.AzureArcData \
-  Microsoft.OffAzure \
-  Microsoft.Migrate \
-  Microsoft.Sql \
-  Microsoft.KeyVault \
-  Microsoft.Insights
-do
-  az provider register --namespace "$provider" --wait
-done
+```powershell
+$providers = @(
+    'Microsoft.Compute', 'Microsoft.Network', 'Microsoft.Storage',
+    'Microsoft.Authorization', 'Microsoft.ManagedIdentity', 'Microsoft.DevTestLab',
+    'Microsoft.HybridCompute', 'Microsoft.GuestConfiguration',
+    'Microsoft.HybridConnectivity', 'Microsoft.AzureArcData',
+    'Microsoft.OffAzure', 'Microsoft.Migrate', 'Microsoft.Sql',
+    'Microsoft.KeyVault', 'Microsoft.Insights'
+)
+foreach ($provider in $providers) {
+    az provider register --namespace $provider --wait
+    if ($LASTEXITCODE -ne 0) { throw "Provider registration failed: $provider" }
+}
 ```
 
 ## Capacity and quota
@@ -70,8 +64,9 @@ assessment, inventory collection, backup, or migration work.
 
 ## Credentials
 
-Copy `deploy.env.example` to an owner-only file outside the repository and set
-`ENV_FILE` to its absolute path. On macOS, Linux, or WSL2,
+Create an owner-only copy of `deploy.env.example` with `init-config.ps1` outside
+the repository and set `ENV_FILE` to its absolute path. On Windows, macOS,
+Linux, or WSL2,
 use the visible `$HOME/ArcJumpstart/lab.env` location for new labs, not a hidden
 folder. Use unique
 passwords for:
@@ -117,149 +112,53 @@ Stage `45` installs SQL Server 2025 Enterprise Developer on clean Windows guests
 
 ## Workstation
 
-The full workflow requires a consistent Linux-style execution environment:
+Use **PowerShell 7 and Azure CLI** on Windows, macOS or Linux. Install Azure
+CLI's Bicep component with `az bicep install`; `az graph query` for the later
+modeling exercise also needs `az extension add --name resource-graph`. The new
+PowerShell entry points do not require WSL2 or an Az PowerShell module.
 
-- macOS
-- Linux
-- WSL2 on Windows
+Open PowerShell 7 in this repository's checkout and verify:
 
-The deployment, preflight and lab-management wrappers are Bash programs that
-use POSIX process, path, permission and signal semantics. Native Windows,
-Git Bash, MSYS2 and Cygwin are not supported deployment runtimes. The wrappers
-reject those environments before reading configuration or changing Azure.
-Do not mix Windows Azure CLI or Windows Python with Bash running in WSL.
-
-Install these tools in the same supported environment:
-
-- Azure CLI (`az`) and its Bicep component
-- Python 3 (`python3`)
-- Git and normal POSIX command-line tools
-- ShellCheck for complete Bash validation
-- PowerShell 7 (`pwsh`) for the optional PowerShell parser and regression tests
-
-No repository package install is required. Verify the effective tools, not
-similarly named Windows executables inherited onto `PATH`:
-
-```bash
-uname -s
-command -v az python3 git
+```powershell
+$PSVersionTable.PSVersion
 az version
 az bicep version
-python3 --version
-git --version
-command -v shellcheck || echo "ShellCheck validation will be skipped."
-command -v pwsh || echo "PowerShell validation will be skipped."
 ```
 
-### Windows: required WSL2 setup
+See Microsoft's [PowerShell 7 installation instructions](https://learn.microsoft.com/powershell/scripting/install/installing-powershell)
+and [Azure CLI installation instructions](https://learn.microsoft.com/cli/azure/install-azure-cli)
+for the chosen OS. The agent uses the interactive Azure CLI **user** identity,
+not a service principal. Run the PowerShell entry points and Azure CLI in the
+same operating system; do not mix Windows executables with WSL paths.
 
-For Windows 10, Microsoft requires version 2004/build 19041 or later for the
-current one-command WSL installation; Windows 11 is also supported. The
-workstation must permit hardware virtualization and the Windows optional
-features used by WSL2. On a managed work laptop, obtain organizational approval
-before enabling those features.
-
-From an **Administrator PowerShell** window:
+Create the private configuration template outside the repository:
 
 ```powershell
-wsl --install
+./scripts/init-config.ps1
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
 ```
 
-This enables WSL and Virtual Machine Platform, installs Ubuntu by default and
-may report that a restart is required. Restart Windows before continuing. Then
-open Ubuntu once, create its Linux user, and confirm from PowerShell that the
-distribution is using WSL version 2:
+`init-config.ps1` restricts the visible folder and file to the current owner
+(Windows ACL or Unix modes `700`/`600`) and never overwrites a file. Edit it
+privately; replace `CHANGEME` values without sending passwords to the agent in
+chat. Use the exact existing file path instead when recovering an existing lab.
+See [configuration location and access](../README.md#find-your-lab-configuration-and-passwords).
+
+After authentication and approval for the Azure target, cost and licensing
+scope, run these commands in order; stop if any fails:
 
 ```powershell
-wsl --list --verbose
+az login
+./scripts/validate.ps1
+./scripts/preflight.ps1 infra
+./scripts/deploy.ps1 all
 ```
 
-If WSL is already installed but Ubuntu is not, use `wsl --list --online` and
-`wsl --install -d Ubuntu`. Follow Microsoft's
-[WSL installation guide](https://learn.microsoft.com/windows/wsl/install) for
-older Windows builds, Store restrictions or installation errors.
-
-Inside Ubuntu, install the Linux tools. Use your organization's approved
-package sources and Microsoft's current
-[Azure CLI Linux instructions](https://learn.microsoft.com/cli/azure/install-azure-cli-linux)
-and
-[PowerShell on Ubuntu instructions](https://learn.microsoft.com/powershell/scripting/install/install-ubuntu):
-
-```bash
-sudo apt update
-sudo apt install -y ca-certificates curl git python3 shellcheck
-# Install Linux Azure CLI. Install Linux PowerShell 7 for complete validation.
-az version
-az bicep install
-```
-
-Clone the repository into the WSL filesystem, such as
-`~/src/arc-jumpstart`, rather than `/mnt/c/...`. Microsoft recommends storing
-project files on the same operating system as the tools that operate on them;
-this also preserves Linux permissions and avoids cross-filesystem path and
-performance problems.
-
-Keep the environment file in the visible `ArcJumpstart` folder in the WSL home
-directory, not in the Windows checkout or repository:
-
-```bash
-export ENV_FILE="$HOME/ArcJumpstart/lab.env"
-mkdir -p -m 700 "$(dirname "$ENV_FILE")"
-if [[ ! -f "$ENV_FILE" ]]; then
-  install -m 600 deploy.env.example "$ENV_FILE"
-fi
-```
-
-Edit the file inside WSL and retain mode `600`. A Windows `chmod` result on
-NTFS is not an equivalent owner-only ACL guarantee.
-
-To find it from Windows, paste
-`\\wsl.localhost\<distro>\home\<WSL-user>\ArcJumpstart` into File Explorer's
-address bar. Open `lab.env` with Notepad to view it. The agent must provide the
-actual full Windows path and WSL path at handoff, with no placeholders. See
-[Find your lab configuration and passwords](../README.md#find-your-lab-configuration-and-passwords)
-for macOS and Linux instructions as well.
-
-### Windows without WSL2
-
-Without WSL2, this repository does not support provisioning or operating the
-lab from that workstation. Do not run `preflight.sh`, `deploy.sh` or `lab.sh`
-from Git Bash and do not translate the commands ad hoc into PowerShell.
-
-For source-only contribution checks, Git Bash with native Windows Azure CLI and
-Python 3 may run:
-
-```bash
-./scripts/validate.sh
-```
-
-That mode compiles Bicep and runs the platform-applicable Bash/Python tests,
-plus ShellCheck and PowerShell checks when those commands are available.
-Deployment-wrapper integration tests are skipped because that runtime is
-intentionally unsupported. This does not prove the deployment runtime. If
-organizational policy prevents WSL2, use an approved Linux/macOS workstation
-or Linux development VM for preflight, deployment and lab management. Keep the
-environment file on that execution host with owner-only permissions.
-
-After configuring the private `ENV_FILE`, run:
-
-```bash
-./scripts/validate.sh
-ENV_FILE=/absolute/private/path/lab.env ./scripts/preflight.sh infra
-```
-
-The first command performs source validation. The second checks the
-authenticated subscription, provider registration, regional VM SKU
-restrictions, and source-image reachability. Regional quota is
-subscription-specific; confirm the relevant VM-family and regional vCPU quota
-for `HOST_VM_SIZE` before deploying.
-
-Then start the complete infrastructure build:
-
-```bash
-ENV_FILE=/absolute/private/path/lab.env ./scripts/deploy.sh all
-```
-
-Keep that process running in its terminal. From another terminal, use
-`./scripts/lab.sh build-status` for a one-shot progress report. Do not start a
-second deployment when the first terminal is quiet.
+Preflight checks the authenticated target, registrations, regional SKU
+restrictions and source reachability. It does not verify subscription-specific
+VM-family and regional vCPU quota; confirm both before deployment. Keep
+deployment in its own terminal. From another PowerShell 7 terminal with the
+same `ENV_FILE`, use `./scripts/lab.ps1 build-status` for one-shot progress; do
+not start another build because the first is quiet. Follow the bootstrap
+runbook's scoped recovery rules instead of replaying `all` against a
+promoted domain.

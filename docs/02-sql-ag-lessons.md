@@ -272,8 +272,8 @@ in this document, tests, issues or screenshots.
 | Clean SQL installation and per-guest parallelism | [`45-install-sql.ps1`](../artifacts/scripts/45-install-sql.ps1), [`45-install-sql-engine.ps1`](../artifacts/scripts/45-install-sql-engine.ps1), [`test-stage45.ps1`](../scripts/test-stage45.ps1) |
 | Domain bootstrap and discovery | [`50-configure-domain.ps1`](../artifacts/scripts/50-configure-domain.ps1), [`test-stage50.ps1`](../scripts/test-stage50.ps1) |
 | Local operation evidence, validation parsing, cluster/CNO checks, SQL/HADR and listener | [`60-configure-sql-ag.ps1`](../artifacts/scripts/60-configure-sql-ag.ps1), [`test-stage60.ps1`](../scripts/test-stage60.ps1) |
-| Safe transcript display | [`lab.sh`](../scripts/lab.sh), [`show-stage-log.py`](../scripts/show-stage-log.py), [`test-stage-log.py`](../scripts/test-stage-log.py) |
-| Repository validation entry point | [`validate.sh`](../scripts/validate.sh) |
+| Safe transcript display | [`lab.ps1`](../scripts/lab.ps1), [`stage-view.ps1`](../scripts/stage-view.ps1), [`test-stage-view.ps1`](../scripts/test-stage-view.ps1) |
+| Repository validation entry point | [`validate.ps1`](../scripts/validate.ps1) |
 
 The regressions include the exact native warning format, generated cluster
 arguments, semantic SQL errors, `1,2` to `1,1` progression, persistent-state
@@ -284,7 +284,7 @@ they do not replace the live per-stage gates.
 
 1. Confirm the failed Azure command is terminal; distinguish deployment state
    from script execution and real guest readiness.
-2. Read `./scripts/lab.sh stage-log 60`. Preserve the relevant validation report
+2. Read `./scripts/lab.ps1 stage-log 60`. Preserve the relevant validation report
    and `C:\ArcJumpstart\Operations\<operation>\<attempt>` evidence securely.
 3. Identify the first failing gate. Check actual console/setup, AD/DNS, update
    report, process receipt or SQL ERRORLOG evidence appropriate to that gate.
@@ -292,7 +292,7 @@ they do not replace the live per-stage gates.
    Do not clear safety markers, drop conflicting databases or rebuild healthy
    infrastructure to bypass the failure.
 5. After active work has ended and the prerequisite is healthy, rerun
-   `./scripts/deploy.sh 60`. Keep a healthy existing cluster and AG.
+   `./scripts/deploy.ps1 60`. Keep a healthy existing cluster and AG.
 6. Verify the database and listener outcomes, not only a zero exit code.
 
 Stage `40` is not a repair command for a promoted DC. For an existing domain,

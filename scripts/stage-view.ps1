@@ -115,7 +115,7 @@ function Get-LabStageProgress {
           '--output', 'json', '--only-show-errors'))
     $progress = ConvertFrom-Json -InputObject $result.Output
     $state = Get-LabProperty $progress 'state'
-    if ($state -notin @('Pending', 'Running', 'Succeeded', 'Failed', 'Canceled', 'TimedOut')) {
+    if ($state -notin @('Unknown', 'Pending', 'Running', 'Succeeded', 'Failed', 'Canceled', 'TimedOut')) {
         throw "Managed Run Command $($labCommands[$Number]) has no valid instance-view execution state."
     }
     return $progress

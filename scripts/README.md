@@ -142,6 +142,8 @@ through `stage-progress ssms`. It lists names and reads each discovered numbered
 stage's instance view separately (at most seven read-only `show` calls), since
 Azure's list response may omit instance views even with expansion. Missing or
 invalid instance-view state is reported as an error, not as an inactive stage.
+Azure's valid `Unknown` execution state remains nonterminal and is displayed
+explicitly rather than implying the stage completed.
 Use `stage-progress 40` when the desired stage is already known.
 Repeat either command only when a progress update is useful; do not create a
 tight polling loop. These commands read existing Managed Run Command instance

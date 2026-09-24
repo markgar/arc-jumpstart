@@ -117,6 +117,15 @@ try {
     if ($showsAfter - $showsBefore -ne 7 -or $report -notmatch 'ActiveStages=20,30') {
         throw 'Build status must inspect all seven numbered stages, not independent SSMS.'
     }
+    $global:LabTestViews['stage20-host-network'].state = 'Unknown'
+    $global:LabTestViews['stage30-images'].state = 'Succeeded'
+    $report = Show-LabStage 'build-status' '' $settings *>&1 | Out-String
+    if ($report -notmatch 'BuildState=Running' -or
+        $report -notmatch 'ActiveStages=20' -or
+        $report -notmatch 'ExecutionState=Unknown' -or
+        $report -match 'BuildState=NoActiveStage|LatestStage=') {
+        throw 'Unknown Azure state must remain visible and nonterminal.'
+    }
     $global:LabTestCommands = @(
         @{ name = 'stage20-host-network' },
         @{ name = 'stage30-images' },

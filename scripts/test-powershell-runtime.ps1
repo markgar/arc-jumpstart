@@ -73,6 +73,24 @@ try {
     else {
         Assert-PrivateUnixMode $env:ENV_FILE
     }
+    $firstPath = $env:ENV_FILE
+    $env:ENV_FILE = Join-Path (Split-Path -Parent $firstPath) 'second-lab.env'
+    & (Join-Path $PSScriptRoot 'init-config.ps1') | Out-Null
+    if ([System.IO.File]::ReadAllText($firstPath) -ne $first -or
+        [System.IO.File]::ReadAllText($env:ENV_FILE) -ne $first) {
+        throw 'Creating a second lab changed the existing configuration or template.'
+    }
+    if ($IsWindows) {
+        foreach ($path in @((Split-Path -Parent $env:ENV_FILE), $env:ENV_FILE)) {
+            $acl = Get-Acl -LiteralPath $path
+            if (-not $acl.AreAccessRulesProtected -or @($acl.Access | Where-Object {
+                $_.IdentityReference.Value -ne $owner
+            }).Count) { throw "Second lab folder or file is not owner-only: $path" }
+        }
+    }
+    else {
+        Assert-PrivateUnixMode $env:ENV_FILE
+    }
     $env:ENV_FILE = $savedPath
     $parameterFile = New-LabParameterFile @{
         location = 'westus2'; secret = 'FakeOnly-123!'

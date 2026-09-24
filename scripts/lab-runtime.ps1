@@ -61,9 +61,11 @@ function Invoke-LabAz {
 function Protect-LabPath {
     param([Parameter(Mandatory)][string]$Path, [switch]$Directory)
     if ($IsWindows) {
-        $acl = Get-Acl -LiteralPath $Path
+        $item = Get-Item -LiteralPath $Path
+        $acl = [System.IO.FileSystemAclExtensions]::GetAccessControl(
+            $item, [System.Security.AccessControl.AccessControlSections]::Access)
         $acl.SetAccessRuleProtection($true, $false)
-        foreach ($existing in @($acl.Access)) {
+        foreach ($existing in $acl.Access) {
             [void]$acl.RemoveAccessRuleSpecific($existing)
         }
         $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
@@ -76,7 +78,7 @@ function Protect-LabPath {
             $inheritance, [System.Security.AccessControl.PropagationFlags]::None,
             [System.Security.AccessControl.AccessControlType]::Allow)
         $acl.SetAccessRule($rule)
-        Set-Acl -LiteralPath $Path -AclObject $acl
+        [System.IO.FileSystemAclExtensions]::SetAccessControl($item, $acl)
     }
     else {
         $mode = if ($Directory) { '700' } else { '600' }

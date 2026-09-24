@@ -48,7 +48,9 @@ never stopped to meet a deadline. An unusually hung installer can outlive the
 managed command's four-hour cap and requires operator diagnosis.
 All started host workers are drained, even after a sibling fails. Installer
 workers are never force-stopped; the host cache lock is held until they finish.
-Only the three SQL guests may be rebooted.
+Only the three SQL guests may be rebooted. A fresh, idle guest with a pending
+Windows servicing reboot gets one pre-setup reboot; SQL Setup exit 3010 gets
+at most one separate post-setup reboot. Persistent reboot flags stop the stage.
 Failed/partial installs require operator diagnosis or stage-40 guest rebuild;
 this stage never repairs, upgrades, uninstalls or overwrites an existing engine.
 #>
@@ -544,11 +546,47 @@ function Complete-SqlGuest {
     param([string]$VMName)
     $script:phaseDeadlineUtc = [DateTime]::UtcNow.AddMinutes(68)
     $null = Wait-SqlGuest $VMName
-    Invoke-SqlGuest $VMName -ScriptBlock {
+    $preSetup = {
         $tasks = @(Get-ScheduledTask -TaskName 'ArcJumpstart-InstallSql*' -ErrorAction SilentlyContinue)
         if (($tasks | Where-Object State -in @('Running', 'Queued')) -or
             (Get-Process -Name setup, ScenarioEngine -ErrorAction SilentlyContinue)) {
             throw 'A legacy SQL task or installer is active. Do not overwrite its payload or start another installation.'
+        }
+        $services = @(Get-Service -Name 'MSSQLSERVER', 'MSSQL$*' -ErrorAction SilentlyContinue)
+        $instanceKey = 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL'
+        $instances = @()
+        if (Test-Path $instanceKey) {
+            $instances = @((Get-ItemProperty $instanceKey).PSObject.Properties.Name |
+                Where-Object { $_ -notlike 'PS*' })
+        }
+        if ($services.Count -or $instances.Count) {
+            if ($services.Count -ne 1 -or $services[0].Name -ne 'MSSQLSERVER' -or
+                $instances.Count -ne 1 -or $instances[0] -ne 'MSSQLSERVER') {
+                throw 'Existing or partial SQL installation requires diagnosis; automatic reboot is forbidden.'
+            }
+            return $false
+        }
+        if (Get-ChildItem "$env:ProgramFiles\Microsoft SQL Server\MSSQL*" -Directory -ErrorAction SilentlyContinue) {
+            throw 'Orphaned SQL instance files exist. Diagnose the partial installation before retrying.'
+        }
+        foreach ($key in @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending',
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')) {
+            if (Test-Path $key) { return $true }
+        }
+        return $false
+    }
+    $pendingReboot = Invoke-SqlGuest $VMName -ScriptBlock $preSetup
+    if ($pendingReboot) {
+        $boot = Wait-SqlGuest $VMName
+        Write-StageLog "Rebooting fresh $VMName once to clear Windows servicing before SQL Setup."
+        Invoke-SqlGuest $VMName -ScriptBlock {
+            & "$env:SystemRoot\System32\shutdown.exe" /r /t 5 /f | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Could not schedule SQL guest reboot.' }
+        }
+        $null = Wait-SqlGuest $VMName -PreviousBoot $boot
+        if (Invoke-SqlGuest $VMName -ScriptBlock $preSetup) {
+            throw "$VMName still requires a Windows servicing reboot after the planned pre-setup reboot. Diagnose before retrying."
         }
     }
     if (-not $script:payload) { throw 'The coordinator must prepare shared media before starting any guest worker.' }

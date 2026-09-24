@@ -21,9 +21,14 @@ implementation.
 4. Confirm the approved Azure subscription, dedicated resource group, region,
    cost scope, and auto-shutdown decision before provisioning.
 5. Use a private `ENV_FILE` outside the repository. For new labs, use
-   `init-config.ps1` to create `$HOME/ArcJumpstart/lab.env` in a visible,
+   `init-config.ps1 -ResourceGroupRoot <root>` to create
+   `$HOME/ArcJumpstart/<root>.env` in a visible,
    owner-only folder. Preserve an existing lab's exact path; never silently
    move it. Never print, commit, overwrite, or infer credentials.
+   Clear a previous lab's `ENV_FILE` override before initializing a new filename,
+   then set it to the actual new path printed by the script.
+   New configurations use `<root>-infra` and `<root>-arc` resource groups.
+   Do not rename or retarget existing labs.
 
 If required information is missing, ask only for that information. Apply the
 documented defaults for routine choices.

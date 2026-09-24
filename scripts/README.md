@@ -13,7 +13,7 @@ inputs and required ready-environment outcome.
 
 | Cross-platform PowerShell 7 command | Purpose |
 |---|---|
-| `./scripts/init-config.ps1` | Creates the owner-only external `ArcJumpstart/lab.env` template, without overwriting an existing file. |
+| `./scripts/init-config.ps1 -ResourceGroupRoot <root>` | Creates the owner-only external `ArcJumpstart/<root>.env` template with `<root>-infra` and `<root>-arc` targets, without overwriting an existing file. |
 | `./scripts/validate.ps1` | Compiles Bicep and runs PowerShell source and stage regressions. No Azure resources are created. |
 | `./scripts/preflight.ps1 infra` / `full` | Checks Azure registrations, host SKU and media reachability. Does not create resources or register providers. |
 | `./scripts/deploy.ps1 all` / `20-30` / `<stage>` | Deploys all stages or a scoped recovery stage with predecessor and Run Command gates. |
@@ -35,7 +35,7 @@ With a populated owner-only environment file outside the repository and an
 authenticated Azure CLI user:
 
 ```powershell
-$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
 ./scripts/validate.ps1 &&
 ./scripts/preflight.ps1 infra &&
 ./scripts/deploy.ps1 all
@@ -64,13 +64,36 @@ in version control. The ignored repository-root `deploy.env` is retained as a
 compatibility fallback; durable external storage is recommended, especially
 for disposable worktrees.
 
-For new labs, create the private file at `$HOME/ArcJumpstart/lab.env` in a visible
-folder, not a hidden folder, and pass that path through `ENV_FILE`. Existing
-overrides and the legacy fallback remain supported; do not silently move or
+For new labs, create the private file at `$HOME/ArcJumpstart/<root>.env`
+in a visible folder, not a hidden folder, and pass that path through `ENV_FILE`.
+`-ResourceGroupRoot` suggests `rg-arc-jumpstart-v2` by default; users can choose
+another root. It sets the filename and records `RESOURCE_GROUP_ROOT`.
+The shared runtime derives `AZURE_RESOURCE_GROUP=<root>-infra` and
+`ARC_RESOURCE_GROUP=<root>-arc`. These suffixes are fixed; conflicting explicit
+group names are rejected. Legacy files without `RESOURCE_GROUP_ROOT` retain
+their explicit group names and defaults.
+The root must be 1-84 characters, valid in Azure resource-group names and as a
+cross-platform filename; the suffix must fit Azure's 90-character limit.
+An explicit `ENV_FILE` overrides the generated filename. Clear it before
+initializing another lab with a generated filename:
+
+```powershell
+$env:ENV_FILE = $null
+./scripts/init-config.ps1 -ResourceGroupRoot rg-arc-jumpstart-v3
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v3.env'
+```
+
+Existing overrides and the legacy fallback remain supported; do not silently move or
 overwrite an existing file. The agent's final handoff must explicitly include
 the actual full path and platform-specific instructions to find and view it,
 including a Windows File Explorer path for WSL users. See
 [Find your lab configuration and passwords](../README.md#find-your-lab-configuration-and-passwords).
+
+Before any resource creation, `deploy.ps1 all` checks both target groups with
+`az group exists` in the configured subscription. If either exists, or a lookup
+fails, it stops without deploying. Choose another root for a new lab or use
+stage-specific recovery for an existing one. Independent recovery commands
+remain available.
 
 `AUTO_SHUTDOWN_ENABLED` has no implicit default. For every new lab, ask the
 operator whether to enable it and record `true` or `false`. When enabled,
@@ -82,9 +105,10 @@ policy later with `./scripts/deploy.ps1 auto-shutdown`; do not rerun stage `10`.
 `deploy.ps1 all` stages the Arc desktop launchers after stage `60` by default.
 Set `PREPARE_ARC_LAUNCHERS=false` to opt out. Staging does not install or
 connect Arc; it only places the clickable helper and approved non-secret Azure
-target identifiers on the guest desktops. `ARC_RESOURCE_GROUP` defaults to
-`<AZURE_RESOURCE_GROUP>-arc`, and `ARC_LOCATION` defaults to
-`AZURE_LOCATION`; either can be overridden.
+target identifiers on the guest desktops. Root-based configurations derive
+`ARC_RESOURCE_GROUP=<root>-arc`. For legacy files that leave it blank, the
+legacy fallback remains `<AZURE_RESOURCE_GROUP>-arc`. `ARC_LOCATION` defaults to
+`AZURE_LOCATION` and can be overridden.
 
 `all` also runs the independent host-only `ssms` step after stage `60`, before
 Arc launchers. It stages a Microsoft-signed bootstrapper on the host Public
@@ -107,7 +131,7 @@ service is required for this workshop.
 An attached agent should normally inspect a running build with:
 
 ```powershell
-$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
 ./scripts/lab.ps1 build-status
 ```
 

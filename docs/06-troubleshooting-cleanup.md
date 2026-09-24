@@ -63,7 +63,7 @@ path to inspect the firewall/profile rather than disabling the firewall. See Mic
 For concise live progress while a stage is running:
 
 ```powershell
-$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
 ./scripts/lab.ps1 stage-progress 40
 ```
 
@@ -248,7 +248,7 @@ safe retry boundaries.
 Deallocate the outer host when pausing:
 
 ```powershell
-$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/lab.env'
+$env:ENV_FILE = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
 ./scripts/lab.ps1 stop
 ```
 

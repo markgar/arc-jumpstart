@@ -2,7 +2,8 @@ param([switch]$NetworkFailure, [switch]$ImageFailure,
     [switch]$BastionFailure, [switch]$BastionOnly,
     [switch]$DisableBastion, [switch]$DisableLaunchers,
     [switch]$ShutdownOnly, [switch]$MissingShutdown,
-    [switch]$SsmsOnly, [switch]$DisableSsms, [switch]$SsmsFailure)
+    [switch]$SsmsOnly, [switch]$DisableSsms, [switch]$SsmsFailure,
+    [ValidateSet('', 'infra', 'arc', 'error', 'invalid')][string]$ExistingTarget = '')
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lab-runtime.ps1')
@@ -24,7 +25,7 @@ try {
     $config = @(
         'AZURE_SUBSCRIPTION_ID=mock-sub'
         'AZURE_LOCATION=westus2'
-        'AZURE_RESOURCE_GROUP=mock-rg'
+        'RESOURCE_GROUP_ROOT=mock'
         'NAME_PREFIX=mock'
         'HOST_ADMIN_USERNAME=mockadmin'
         'HOST_ADMIN_PASSWORD=FakeOnly-123!'
@@ -52,7 +53,71 @@ try {
     if ($settings.AUTO_SHUTDOWN_TIME_ZONE -ne 'Central Standard Time') {
         throw 'Literal configuration values were not preserved.'
     }
+    $settingsFixture = Join-Path $directory 'settings.env'
+    foreach ($root in @('custom-lab', ('a' * 84))) {
+        [System.IO.File]::WriteAllLines($settingsFixture, @("RESOURCE_GROUP_ROOT=$root"))
+        $derived = Read-LabSettings $settingsFixture
+        if ($derived.AZURE_RESOURCE_GROUP -ne "$root-infra" -or
+            $derived.ARC_RESOURCE_GROUP -ne "$root-arc") {
+            throw 'Root-based settings did not derive fixed resource group suffixes.'
+        }
+    }
+    foreach ($invalid in @('RESOURCE_GROUP_ROOT=', 'RESOURCE_GROUP_ROOT=CHANGEME',
+        'RESOURCE_GROUP_ROOT=../escape', 'RESOURCE_GROUP_ROOT=CON',
+        "RESOURCE_GROUP_ROOT=$('a' * 85)",
+        "RESOURCE_GROUP_ROOT=custom`nAZURE_RESOURCE_GROUP=wrong",
+        "RESOURCE_GROUP_ROOT=custom`nARC_RESOURCE_GROUP=wrong")) {
+        [System.IO.File]::WriteAllText($settingsFixture, $invalid)
+        $rejected = $false
+        try { [void](Read-LabSettings $settingsFixture) }
+        catch { $rejected = $true }
+        if (-not $rejected) { throw 'Invalid or conflicting root-based settings were accepted.' }
+    }
+    [System.IO.File]::WriteAllLines($settingsFixture, @(
+        'AZURE_RESOURCE_GROUP=legacy-rg', 'ARC_RESOURCE_GROUP=legacy-arc'))
+    $legacy = Read-LabSettings $settingsFixture
+    if ($legacy.AZURE_RESOURCE_GROUP -ne 'legacy-rg' -or $legacy.ARC_RESOURCE_GROUP -ne 'legacy-arc') {
+        throw 'Existing configurations must retain their original resource group names.'
+    }
     $savedPath = $env:ENV_FILE
+    & {
+        New-Variable -Name HOME -Value (Join-Path $directory 'home') -Scope Local -Force
+        $env:ENV_FILE = ''
+        & (Join-Path $PSScriptRoot 'init-config.ps1') | Out-Null
+        $defaultPath = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
+        $defaultSettings = Read-LabSettings $defaultPath
+        if ($defaultSettings.AZURE_RESOURCE_GROUP -ne 'rg-arc-jumpstart-v2-infra' -or
+            $defaultSettings.ARC_RESOURCE_GROUP -ne 'rg-arc-jumpstart-v2-arc') {
+            throw 'Default configuration must use the root for its filename and paired resource groups.'
+        }
+        $original = [System.IO.File]::ReadAllText($defaultPath)
+        & (Join-Path $PSScriptRoot 'init-config.ps1') -ResourceGroupRoot 'second-lab' | Out-Null
+        $secondPath = Join-Path $HOME 'ArcJumpstart/second-lab.env'
+        $secondSettings = Read-LabSettings $secondPath
+        if ($secondSettings.AZURE_RESOURCE_GROUP -ne 'second-lab-infra' -or
+            $secondSettings.ARC_RESOURCE_GROUP -ne 'second-lab-arc' -or
+            [System.IO.File]::ReadAllText($defaultPath) -ne $original) {
+            throw 'A second root must create isolated targets without changing the first configuration.'
+        }
+        Add-Content -LiteralPath $secondPath -Value '# Preserve existing configuration'
+        $second = [System.IO.File]::ReadAllText($secondPath)
+        & (Join-Path $PSScriptRoot 'init-config.ps1') -ResourceGroupRoot 'second-lab' | Out-Null
+        if ([System.IO.File]::ReadAllText($secondPath) -ne $second) {
+            throw 'Root-based initialization overwrote an existing configuration.'
+        }
+        if (-not $IsWindows) {
+            Assert-PrivateUnixMode $defaultPath
+            Assert-PrivateUnixMode $secondPath
+        }
+        foreach ($invalidRoot in @('../escape', 'bad/name', 'bad\name', 'trailing.', '', ('a' * 85))) {
+            $rejected = $false
+            try {
+                & (Join-Path $PSScriptRoot 'init-config.ps1') -ResourceGroupRoot $invalidRoot | Out-Null
+            }
+            catch { $rejected = $true }
+            if (-not $rejected) { throw 'An invalid resource group root was accepted.' }
+        }
+    }
     $env:ENV_FILE = Join-Path (Join-Path $directory 'private') 'lab.env'
     & (Join-Path $PSScriptRoot 'init-config.ps1') | Out-Null
     $first = [System.IO.File]::ReadAllText($env:ENV_FILE)
@@ -91,6 +156,13 @@ try {
     else {
         Assert-PrivateUnixMode $env:ENV_FILE
     }
+    $env:ENV_FILE = Join-Path (Split-Path -Parent $firstPath) 'custom-path.env'
+    & (Join-Path $PSScriptRoot 'init-config.ps1') -ResourceGroupRoot 'custom-root' | Out-Null
+    $customSettings = Read-LabSettings $env:ENV_FILE
+    if ($customSettings.AZURE_RESOURCE_GROUP -ne 'custom-root-infra' -or
+        $customSettings.ARC_RESOURCE_GROUP -ne 'custom-root-arc') {
+        throw 'An explicit ENV_FILE must preserve the selected resource group root.'
+    }
     $env:ENV_FILE = $savedPath
     $parameterFile = New-LabParameterFile @{
         location = 'westus2'; secret = 'FakeOnly-123!'
@@ -123,6 +195,19 @@ try {
         $name = if ($call -contains '--name') { $call[([array]::IndexOf($call, '--name') + 1)] } else { '' }
         switch ($key) {
             'account show --query' { return 'user' }
+            'group exists --name' {
+                if ($ExistingTarget -eq 'error') {
+                    $global:LASTEXITCODE = 1
+                    return 'Mock resource group lookup failed.'
+                }
+                if ($ExistingTarget -eq 'invalid') { return 'unknown' }
+                if ($name -eq "mock-$ExistingTarget") { return 'true' }
+                return 'false'
+            }
+            'group create --name' {
+                if ($ExistingTarget) { throw 'Collision gate allowed a resource group mutation.' }
+                return ''
+            }
             'deployment group create' {
                 $global:LabTestDeployed.Add($name)
                 $file = $call[([array]::IndexOf($call, '--parameters') + 1)].TrimStart('@')
@@ -222,6 +307,16 @@ try {
         throw 'A password appeared on the Azure CLI command line.'
     }
     if ($BastionFailure -or $DisableBastion -or $DisableLaunchers -or $DisableSsms -or $SsmsFailure) { return }
+    foreach ($target in @('infra', 'arc', 'error', 'invalid')) {
+        $failed = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath -ExistingTarget $target 2>&1 | Out-String
+        $expectedError = if ($target -in @('infra', 'arc')) { "Resource groups already exist: mock-$target" }
+            elseif ($target -eq 'error') { 'Azure CLI command failed (exit 1): group exists --name' }
+            else { 'Could not determine whether resource group' }
+        if ($LASTEXITCODE -eq 0 -or $failed -notmatch [regex]::Escape($expectedError) -or
+            $failed -match '==> Stage 00:' -or $failed -match 'Collision gate allowed') {
+            throw "Fresh-deployment resource group gate failed for $target."
+        }
+    }
     $failed = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath -NetworkFailure 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0 -or $failed -match '==> Stage 40:' -or
         $failed -notmatch 'Stage 30 may outlive this wrapper') {

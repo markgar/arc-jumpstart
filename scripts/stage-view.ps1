@@ -107,6 +107,20 @@ function Show-StageProgress {
     }
 }
 
+function Get-LabStageProgress {
+    param([string]$Number, [string[]]$Arguments, [string[]]$HostArguments)
+    $result = Invoke-LabAz ($Arguments + @('show') + $HostArguments +
+        @('--name', $labCommands[$Number], '--expand', 'instanceView',
+          '--query', '{state:instanceView.executionState,start:instanceView.startTime,end:instanceView.endTime,output:instanceView.output,error:instanceView.error}',
+          '--output', 'json', '--only-show-errors'))
+    $progress = ConvertFrom-Json -InputObject $result.Output
+    $state = Get-LabProperty $progress 'state'
+    if ($state -notin @('Pending', 'Running', 'Succeeded', 'Failed', 'Canceled', 'TimedOut')) {
+        throw "Managed Run Command $($labCommands[$Number]) has no valid instance-view execution state."
+    }
+    return $progress
+}
+
 function Show-LabStage {
     param([string]$Command, [string]$Number, [hashtable]$Settings)
     Assert-LabSettings $Settings @('AZURE_SUBSCRIPTION_ID', 'AZURE_RESOURCE_GROUP', 'NAME_PREFIX')
@@ -119,17 +133,37 @@ function Show-LabStage {
     $hostArgs = @('--resource-group', $Settings.AZURE_RESOURCE_GROUP,
         '--vm-name', "$($Settings.NAME_PREFIX)-host")
     if ($Command -eq 'build-status') {
-        $result = Invoke-LabAz ($args + @('list') + $hostArgs + @('--expand', 'instanceView', '--output', 'json', '--only-show-errors'))
-        $commands = @(ConvertFrom-Json -InputObject $result.Output)
+        $result = Invoke-LabAz ($args + @('list') + $hostArgs + @('--output', 'json', '--only-show-errors'))
+        $commands = ConvertFrom-Json -InputObject $result.Output -NoEnumerate
+        if ($commands -isnot [array]) {
+            throw 'Managed Run Command list did not return a JSON array.'
+        }
         $observed = @()
+        $stageNames = @{}
+        foreach ($stage in @('10', '20', '30', '40', '45', '50', '60')) {
+            $stageNames[$labCommands[$stage]] = $stage
+        }
         foreach ($item in $commands) {
-            $entry = $labCommands.GetEnumerator() | Where-Object Value -eq $item.name | Select-Object -First 1
-            if (-not $entry) { continue }
-            $observed += [pscustomobject]@{ Number = $entry.Key; View = $item.instanceView }
+            $name = Get-LabProperty $item 'name'
+            if (-not $stageNames.ContainsKey([string]$name)) { continue }
+            $number = $stageNames[[string]$name]
+            if (@($observed | Where-Object Number -eq $number).Count) {
+                throw "Managed Run Command list contains duplicate stage $number."
+            }
+            $progress = Get-LabStageProgress $number $args $hostArgs
+            $start = Get-LabProperty $progress 'start'
+            $startUtc = [datetimeoffset]::MinValue
+            if ($start -and -not [datetimeoffset]::TryParse(
+                [string]$start, [ref]$startUtc)) {
+                throw "Managed Run Command $($labCommands[$number]) has an invalid instance-view start time."
+            }
+            $observed += [pscustomobject]@{
+                Number = $number; Progress = $progress; StartUtc = $startUtc
+            }
         }
         $active = @($observed | Where-Object {
-            $state = Get-LabProperty $_.View 'executionState'
-            $state -and $state -notin @('Succeeded', 'Failed', 'Canceled')
+            (Get-LabProperty $_.Progress 'state') -notin
+                @('Succeeded', 'Failed', 'Canceled', 'TimedOut')
         } | Sort-Object Number)
         if ($active.Count) {
             Write-Host 'BuildState=Running'
@@ -139,9 +173,8 @@ function Show-LabStage {
         elseif ($observed.Count) {
             Write-Host 'BuildState=NoActiveStage'
             Write-Host 'ActiveStages='
-            $selected = @($observed | Sort-Object {
-                Get-LabProperty $_.View 'startTime'
-            } -Descending | Select-Object -First 1)
+            $selected = @($observed | Sort-Object StartUtc -Descending |
+                Select-Object -First 1)
             Write-Host "LatestStage=$($selected[0].Number)"
         }
         else {
@@ -151,22 +184,12 @@ function Show-LabStage {
             return
         }
         foreach ($item in $selected) {
-            Show-StageProgress $item.Number @{
-                state = Get-LabProperty $item.View 'executionState'
-                start = Get-LabProperty $item.View 'startTime'
-                end = Get-LabProperty $item.View 'endTime'
-                output = Get-LabProperty $item.View 'output'
-                error = Get-LabProperty $item.View 'error'
-            } $Settings
+            Show-StageProgress $item.Number $item.Progress $Settings
         }
         return
     }
     if ($Command -eq 'stage-progress') {
-        $result = Invoke-LabAz ($args + @('show') + $hostArgs +
-            @('--name', $labCommands[$Number], '--expand', 'instanceView',
-              '--query', '{state:instanceView.executionState,start:instanceView.startTime,end:instanceView.endTime,output:instanceView.output,error:instanceView.error}',
-              '--output', 'json', '--only-show-errors'))
-        Show-StageProgress $Number (ConvertFrom-Json -InputObject $result.Output) $Settings
+        Show-StageProgress $Number (Get-LabStageProgress $Number $args $hostArgs) $Settings
         return
     }
     $prefix = $labLogs[$Number]

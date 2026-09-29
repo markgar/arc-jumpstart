@@ -23,6 +23,10 @@ param agNode1StaticIp string = '192.168.128.12'
 
 param agNode2StaticIp string = '192.168.128.13'
 
+param retailStaticIp string = '192.168.128.14'
+
+param insightStaticIp string = '192.168.128.15'
+
 param nestedGatewayIp string = '192.168.128.1'
 
 param dhcpScopeId string = '192.168.128.0'
@@ -84,6 +88,14 @@ module domain '../../modules/hostRunCommand.bicep' = {
       {
         name: 'AgNode2StaticIp'
         value: agNode2StaticIp
+      }
+      {
+        name: 'RetailStaticIp'
+        value: retailStaticIp
+      }
+      {
+        name: 'InsightStaticIp'
+        value: insightStaticIp
       }
       {
         name: 'NestedGatewayIp'

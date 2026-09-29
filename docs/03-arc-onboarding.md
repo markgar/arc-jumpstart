@@ -120,6 +120,14 @@ Repeat the process for:
 - `JS-SQL-01`
 - `JS-SQL-AG-01`
 - `JS-SQL-AG-02`
+- `JS-RETAIL-01`
+- `JS-INSIGHT-01`
+
+`JS-RETAIL-01` hosts both a relational engine and SSAS; `JS-INSIGHT-01`
+hosts SSAS only. Onboard both as Arc machines, but do not expect a relational
+SQL instance resource for the SSAS-only guest. Verify BI discovery coverage
+using the [assessment guide](04-assessment.md); do not install a Database Engine
+on `JS-INSIGHT-01` to make it appear as a SQL instance.
 
 > [!NOTE]
 > Onboard `JS-DC-01` to Arc for inventory and assessment so the environment

@@ -1,28 +1,25 @@
 resources
 // __RESOURCE_GROUP_FILTER__
-| where type in~ (
-    "microsoft.azurearcdata/sqlserverinstances",
-    "microsoft.azurearcdata/sqlserverinstances/availabilitygroups",
-    "microsoft.azurearcdata/sqlserverinstances/databases",
-    "microsoft.hybridcompute/machines",
-    "microsoft.hybridcompute/machines/extensions",
-    "microsoft.azurearcdata/sqlserverlicenses",
-    "microsoft.azurearcdata/sqlserveresulicenses"
-)
-| where type !~ "microsoft.hybridcompute/machines/extensions"
-    or tostring(properties.type) in~ (
-        "WindowsAgent.SqlServer",
-        "LinuxAgent.SqlServer"
+| extend NormalizedType = tolower(type)
+| where NormalizedType in (
+        "microsoft.azurearcdata/sqlserverinstances",
+        "microsoft.hybridcompute/machines",
+        "microsoft.hybridcompute/machines/extensions",
+        "microsoft.azurearcdata/sqlserverlicenses",
+        "microsoft.azurearcdata/sqlserveresulicenses"
     )
+    or NormalizedType startswith "microsoft.azurearcdata/sqlserverinstances/"
 | extend RecordType = case(
     type =~ "microsoft.azurearcdata/sqlserverinstances", "SQL_INSTANCE",
     type =~ "microsoft.azurearcdata/sqlserverinstances/availabilitygroups", "AVAILABILITY_GROUP",
     type =~ "microsoft.azurearcdata/sqlserverinstances/databases", "DATABASE",
     type =~ "microsoft.hybridcompute/machines", "ARC_MACHINE",
-    type =~ "microsoft.hybridcompute/machines/extensions", "SQL_EXTENSION",
+    type =~ "microsoft.hybridcompute/machines/extensions"
+        and tostring(properties.type) in~ ("WindowsAgent.SqlServer", "LinuxAgent.SqlServer"), "SQL_EXTENSION",
+    type =~ "microsoft.hybridcompute/machines/extensions", "ARC_EXTENSION",
     type =~ "microsoft.azurearcdata/sqlserverlicenses", "SQL_LICENSE",
     type =~ "microsoft.azurearcdata/sqlserveresulicenses", "ESU_LICENSE",
-    "OTHER"
+    "OTHER_SQL_CHILD"
 )
 | extend ParentJoinKey = case(
     RecordType == "SQL_INSTANCE",
@@ -31,19 +28,62 @@ resources
         tolower(substring(id, 0, indexof(tolower(id), "/availabilitygroups/"))),
     RecordType == "DATABASE",
         tolower(substring(id, 0, indexof(tolower(id), "/databases/"))),
-    RecordType == "SQL_EXTENSION",
+    RecordType in ("SQL_EXTENSION", "ARC_EXTENSION"),
         tolower(substring(id, 0, indexof(tolower(id), "/extensions/"))),
     ""
 )
+| extend
+    SqlInstanceResourceId = case(
+      RecordType == "SQL_INSTANCE", tolower(id),
+      NormalizedType startswith "microsoft.azurearcdata/sqlserverinstances/",
+          extract(@"^(.*?/sqlserverinstances/[^/]+)/", 1, tolower(id)),
+      ""
+    ),
+    MachineResourceId = case(
+      RecordType == "ARC_MACHINE", tolower(id),
+      RecordType in ("SQL_INSTANCE", "SQL_EXTENSION", "ARC_EXTENSION"), ParentJoinKey,
+      ""
+    ),
+    Assessment = parse_json(tostring(properties.migration.assessment))
+| extend Recommendations = parse_json(tostring(Assessment.skuRecommendationResults))
 | project
+    ExportedAtUtc = now(),
+    id,
     RecordType,
     JoinKey = tolower(id),
     ParentJoinKey,
     ResourceId = id,
     ResourceName = name,
+    ResourceType = NormalizedType,
     SubscriptionId = subscriptionId,
     ResourceGroup = resourceGroup,
     Location = location,
+    MachineResourceId,
+    SqlInstanceResourceId,
+    MachineStatus = tostring(properties.status),
+    OsName = tostring(properties.osName),
+    OsVersion = tostring(properties.osVersion),
+    LogicalCoreCount = tostring(properties.detectedProperties.logicalCoreCount),
+    MemoryGiB = tostring(properties.detectedProperties.totalPhysicalMemoryInGigabytes),
+    SqlInstanceName = tostring(properties.instanceName),
+    SqlServiceType = tostring(properties.serviceType),
+    SqlVersion = tostring(properties.version),
+    SqlEdition = tostring(properties.edition),
+    SqlHostCoreCount = tostring(properties.cores),
+    ExtensionType = tostring(properties.type),
+    ExtensionVersion = tostring(properties.typeHandlerVersion),
+    FailoverCluster = tostring(properties.failoverCluster),
+    AvailabilityGroupInfo = tostring(properties.info),
+    AvailabilityGroupReplicas = tostring(properties.replicas),
+    AvailabilityGroupDatabases = tostring(properties.databases),
+    AssessmentEnabled = tostring(Assessment.enabled),
+    AssessmentUploadTime = tostring(Assessment.assessmentUploadTime),
+    SqlMiRecommendation = tostring(Recommendations.azureSqlManagedInstance),
+    SqlDbRecommendation = tostring(Recommendations.azureSqlDatabase),
+    SqlVmRecommendation = tostring(Recommendations.azureSqlVirtualMachine),
+    ServerAssessments = tostring(Assessment.serverAssessments),
+    MigrationAssessment = tostring(Assessment),
+    BestPracticesAssessment = tostring(properties.bestPracticesAssessment),
     Tags = tostring(tags),
     Properties = tostring(properties)
-| order by RecordType asc, ParentJoinKey asc, ResourceName asc
+| order by RecordType asc, ParentJoinKey asc, ResourceName asc, ResourceId asc

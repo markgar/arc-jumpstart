@@ -22,7 +22,7 @@ group before deploying them.
 | [20-host-network](stages/20-host-network/main.bicep) | [`20-host-network.ps1`](../artifacts/scripts/20-host-network.ps1): nested switch, NAT and DHCP. |
 | [30-images](stages/30-images/main.bicep) | [`30-download-images.ps1`](../artifacts/scripts/30-download-images.ps1): Windows/Linux image cache. |
 | [40-nested-vms](stages/40-nested-vms/main.bicep) | [`40-create-nested-vms.ps1`](../artifacts/scripts/40-create-nested-vms.ps1): generalized Windows parent, guests, completed/activated setup, names and SIDs. |
-| [45-sql-install](stages/45-sql-install/main.bicep) | [`45-install-sql.ps1`](../artifacts/scripts/45-install-sql.ps1) orchestrates [`45-install-sql-engine.ps1`](../artifacts/scripts/45-install-sql-engine.ps1) per SQL guest. |
+| [45-sql-install](stages/45-sql-install/main.bicep) | [`45-install-sql.ps1`](../artifacts/scripts/45-install-sql.ps1) orchestrates [`45-install-sql-engine.ps1`](../artifacts/scripts/45-install-sql-engine.ps1) across five guests: four Database Engines and two SSAS instances, colocated on `JS-RETAIL-01`; `JS-INSIGHT-01` has SSAS only. |
 | [50-domain](stages/50-domain/main.bicep) | [`50-configure-domain.ps1`](../artifacts/scripts/50-configure-domain.ps1): AD/DNS, membership, identities and SQL access. |
 | [60-sql-ag](stages/60-sql-ag/main.bicep) | [`60-configure-sql-ag.ps1`](../artifacts/scripts/60-configure-sql-ag.ps1): cluster, witness, SQL/HADR, sample databases and listener. |
 

@@ -36,10 +36,24 @@ subscription. Arc-based discovery currently works only with new projects.
 
 Verify that the project contains:
 
-- Four Windows server machines.
+- Six Windows server machines.
 - One Linux server machine.
 - The standalone SQL instance.
 - Both SQL availability-group replicas and their databases.
+- The additional relational instance on `JS-RETAIL-01` and `JumpstartRetailDB`.
+- `JS-INSIGHT-01` as a server with SSAS but no relational engine.
+
+Compare four workload shapes: engine-only, AOAG, engine plus SSAS, and SSAS-only.
+Both SSAS instances are intentionally empty: no tabular models or SSAS databases
+are deployed. Installed services and server utilization are the BI scenario,
+not model migration or model-performance assessment.
+
+Do not assume Arc SQL inventory or the Arc-based Migrate preview exposes SSAS
+instances, models, sizing, or migration recommendations. Record what the current
+service actually discovers, including missing BI coverage. A relational SQL
+recommendation for `JS-RETAIL-01` does not assess its colocated SSAS workload.
+Do not create synthetic SQL resources for `JS-INSIGHT-01`; keep its machine
+record even when there is no SQL-instance child.
 
 Azure Migrate automatically creates default assessments and business cases. Review both default strategies:
 
@@ -80,10 +94,17 @@ Use manual sync while learning the workflow, then enable automatic sync and veri
 
 ## Export Resource Graph modeling input
 
+For the customer workflow, use
+[one Resource Graph query and one CSV export](04-customer-arc-inventory.md).
+It uses only Arc-visible workload resources, not the Azure/Hyper-V host, and
+documents HA relationships, published migration results and coverage gaps.
+
 The versioned query at
 [`queries/arc-sql-modeling-inventory.kql`](../queries/arc-sql-modeling-inventory.kql)
-returns Arc machines, Arc-enabled SQL instances, databases, availability groups,
-SQL extensions, and licensing resources. Its join keys preserve these
+returns Arc machines, Arc-enabled SQL instances/components, databases,
+availability groups, Arc extensions, licensing resources and indexed SQL child
+types. It includes FCI metadata and published migration-assessment results.
+Its join keys preserve these
 relationships:
 
 - Arc machine to SQL instance.
@@ -103,12 +124,13 @@ group, then writes a timestamped directory under `out/arc-modeling/` containing:
 - `inventory.raw.json`: the complete Azure Resource Graph response.
 - `inventory.csv`: one modeling row per resource, including raw `Properties`.
 
-The export does not invent missing values or flatten undocumented property
-shapes. Use `RecordType`, `JoinKey`, and `ParentJoinKey` to correlate records,
-then inspect the current properties for server sizing, SQL configuration,
-database details, assessment findings, and AG replica role. Count workload
-capacity from the active/primary replica; retain passive/secondary resources in
-the model without counting the same protected workload twice.
+The export projects documented fields and retains full `Properties` without
+inventing missing values. Use `RecordType`, `JoinKey`, `ParentJoinKey` and
+`SqlInstanceResourceId` to correlate records. Inspect replica membership and
+protected databases to avoid counting replicated data twice, but include
+secondary read/reporting work, other databases and role changes during the
+performance window. An instance-level recommendation is not automatically a
+consolidated recommendation for its AG.
 
 ## Record the modeling decision
 

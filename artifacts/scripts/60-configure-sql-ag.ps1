@@ -727,14 +727,18 @@ try {
     $sqlServerModule = Get-SqlServerModulePackage
 
     Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage60] Preparing standalone migration database and SQL cluster nodes."
-    Invoke-GuestWithRetry `
-        -VMName $standaloneName `
-        -Credential $domainCredential `
-        -ArgumentList $StandaloneDatabaseName `
-        -ScriptBlock {
-            param($DatabaseName)
-            $sqlcmd = (Get-Command sqlcmd.exe -ErrorAction Stop).Source
-            $query = @"
+    foreach ($sample in @(
+        @{ VMName = $standaloneName; DatabaseName = $StandaloneDatabaseName },
+        @{ VMName = 'JS-RETAIL-01'; DatabaseName = 'JumpstartRetailDB' }
+    )) {
+        Invoke-GuestWithRetry `
+            -VMName $sample.VMName `
+            -Credential $domainCredential `
+            -ArgumentList $sample.DatabaseName `
+            -ScriptBlock {
+                param($DatabaseName)
+                $sqlcmd = (Get-Command sqlcmd.exe -ErrorAction Stop).Source
+                $query = @"
 IF DB_ID(N'$DatabaseName') IS NULL
 BEGIN
     CREATE DATABASE [$DatabaseName];
@@ -751,11 +755,12 @@ EXEC (N'USE [$DatabaseName];
         SELECT TOP (1000) REPLICATE(CONVERT(nvarchar(36), NEWID()), 50)
         FROM sys.all_objects a CROSS JOIN sys.all_objects b;');
 "@
-            $output = & $sqlcmd -S localhost -E -b -C -Q $query 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                throw "Failed to create standalone migration database ${DatabaseName}: $(($output -join [Environment]::NewLine).Trim())"
+                $output = & $sqlcmd -S localhost -E -b -C -Q $query 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Failed to create standalone migration database ${DatabaseName}: $(($output -join [Environment]::NewLine).Trim())"
+                }
             }
-        }
+    }
 
     foreach ($nodeName in $sqlNodes) {
         Wait-VMHeartbeat -VMName $nodeName

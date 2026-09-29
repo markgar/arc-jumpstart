@@ -47,7 +47,7 @@ configuration and image downloads, then join both before creating guests.
 |---|---|
 | `00`-`30` | Build the Azure host, nested networking and persistent image cache. |
 | `40` | Generalize the Windows-only parent, supply the correct unattended setup key, create the guests, finish native OOBE, activate Windows, then rename/restart and verify unique machine SIDs. |
-| `45` | Install SQL after cloning. The current code installs across three guests in parallel while allowing only one installer per guest. |
+| `45` | Install SQL/SSAS after cloning. The current code installs assigned features across five guests in parallel while allowing only one installer per guest. |
 | `50` | Establish AD DS/DNS, create the SQL service account, join the SQL members and grant the intended domain SQL access. |
 | `60` | Prepare SQL nodes and the standalone sample database; validate the nodes; create or retain the intended cluster; configure witness/listener permissions and quorum; enable HADR; create or retain the intended AG and sample database; verify the listener. |
 
@@ -59,6 +59,40 @@ Windows service edit or a HADR registry write.
 
 ## Lessons now reflected in the code
 
+### Seven-server stage 45 timing and scoped recovery (2026-09-29)
+
+The isolated Azure VM smoke tests passed for SQL + SSAS and SSAS-only using
+the saved installer. The first full seven-server run then completed stage `40`
+but stopped at stage `45`, after all started workers had finished:
+
+- `JS-SQL-01` and `JS-SQL-AG-02` passed.
+- `JS-SQL-AG-01` encountered CBS `RebootPending` at the installer's final
+  prerequisite gate, after the host's earlier preflight. It did not install SQL.
+- Both BI guests recorded `InstalledAndVerified` with Setup exit code `0`, but
+  the subsequent 120-second readiness window still detected `setup` or
+  `ScenarioEngine`. This was a final-readiness failure, not a failed BI Setup.
+
+Read-only inspection after stage termination found no installer processes or
+pending-reboot flags on any SQL guest, and the expected services were running
+on the four installed guests. Their recorded boot times had not changed.
+The transient process identities were not captured by the old error message;
+do not claim a specific leftover executable caused the failure.
+
+The saved code now repeats the idle/fresh-guest servicing check after the media
+copy, before deciding whether its one allowed pre-setup reboot is necessary.
+BI readiness has a 600-second grace window, capped by the remaining guest
+execution budget. Active-process guards remain in force and now report
+process names, PIDs and executable paths (never command lines). No process is
+killed and no readiness, edition or servicing gate is bypassed.
+
+If this boundary fails, inspect the terminal host log and saved guest results.
+Confirm every installer/worker has finished before retrying `deploy.ps1 45`.
+That canonical stage re-verifies all five guests, retaining installed features
+and installing only missing ones. Follow success with `50`, `60`, `ssms` and
+`arc-launchers`, stopping on failure. Do not rerun `all` or rebuild guests.
+These mitigations still need fresh-run proof; a flag appearing after the final
+preflight must continue to block Setup, not be cleared manually.
+
 ### Prepare Windows first, then install SQL on each clone
 
 We abandoned cloning the preconfigured SQL image for this lab. Generalizing
@@ -68,7 +102,7 @@ The saved path creates distinct Windows guests first, then installs SQL Server
 Developer are not substitutes for the chosen edition.
 
 SQL Setup runs synchronously inside a held guest session. Parallelism is
-between the three guests, never between installers on one guest. A retry
+between guests, never between installers on one guest. A retry
 verifies and retains healthy installations rather than blindly reinstalling
 them. The original successful installations were sequential; the later
 parallel implementation subsequently passed on three fresh guests during the
@@ -211,6 +245,87 @@ established, and AG02 received one planned reboot before cluster creation.
 SQL and the secure channel were checked afterward. The next native validation
 passed. This was an operator recovery action, not a new blanket reboot policy.
 Use the maintenance/failover procedure if a cluster already hosts workloads.
+
+### Successful offline inventory can still contain stale installed-update metadata
+
+On September 29, 2026, the seven-server build stopped before cluster creation
+because native validation reported KB5040711 and KB5040712 missing from AG01
+but installed on AG02. Both nodes nevertheless reported the same installed
+Microsoft OLE DB driver versions: 18.7.5.0 and 19.3.7.0. Both had running SQL,
+healthy domain secure channels, no cluster and no active SQL Setup processes.
+An offline WUA search succeeded on each node but returned different installed
+metadata for those two updates. A successful search alone did not establish
+that the cached inventory was current.
+
+One online installed-metadata search on each node, followed by a successful
+offline search, made both inventories report both KBs with matching update
+identities and revisions (revision 200), and 11 installed updates each. No
+patches were downloaded or installed, no reboot was performed, and no update
+source, policy or data store was changed. This establishes stale metadata for
+these two reported differences. The subsequent stage `60` passed the unchanged
+native validation gate, created the cluster and AG, verified synchronized
+database health and completed the integrated-authentication listener query.
+Its canonical execution finished successfully at 18:57:31 UTC. This recovered
+run is not proof of an unattended clean rebuild.
+
+The final read-only guest check found all seven guests running with their
+configured core counts. All five SQL/BI members had healthy domain secure
+channels and the expected running services; Insight had no Database Engine
+service. Both cluster nodes were Up with an online file-share witness.
+`JumpstartDB` was synchronized, healthy and not suspended on both replicas,
+with AG01 primary and AG02 secondary. The standalone and Retail sample
+databases were online. Both SSAS ports were reachable from the host; all six
+Windows desktop Arc launchers were present, and the DC exposed SYSVOL/NETLOGON.
+Linux SSH was reachable, but authenticated Linux login was not exercised.
+SSAS application authentication and populated Arc/assessment inventory remain
+unproven. SSMS and launcher preparation completed successfully; Arc connection,
+assessment and migration were not performed.
+
+For this bounded pre-cluster recovery, the agent must first retain the native
+report, confirm the canonical stage is terminal, check for active installers
+and cluster operations, and compare actual installed product versions. Do not
+infer equivalence from matching versions alone or suppress validation warnings.
+When that evidence supports a metadata refresh, run the following once in an
+elevated Windows PowerShell context on **each affected guest** (for example,
+through authenticated PowerShell Direct from the host):
+
+```powershell
+$ErrorActionPreference = 'Stop'
+if (Test-Path 'HKLM:\Cluster') { throw 'Use the existing-cluster maintenance procedure.' }
+if (Get-Process -Name setup, ScenarioEngine -ErrorAction SilentlyContinue) {
+    throw 'An installer is active; stop recovery.'
+}
+$session = New-Object -ComObject Microsoft.Update.Session
+$session.ClientApplicationID = 'ArcJumpstart-InstalledMetadataRecovery'
+$searcher = $session.CreateUpdateSearcher()
+$searcher.Online = $true
+$online = $searcher.Search('IsInstalled=1')
+if ($null -eq $online -or $online.ResultCode -ne 2) {
+    throw 'Online installed-metadata refresh did not fully succeed.'
+}
+$searcher.Online = $false
+$offline = $searcher.Search('IsInstalled=1')
+if ($null -eq $offline -or $offline.ResultCode -ne 2) {
+    throw 'Offline installed-update inventory did not fully succeed.'
+}
+$offline.Updates | ForEach-Object {
+    [pscustomobject]@{
+        Computer = $env:COMPUTERNAME
+        Title = $_.Title
+        KB = @($_.KBArticleIDs) -join ','
+        UpdateId = $_.Identity.UpdateID
+        Revision = $_.Identity.RevisionNumber
+    }
+}
+```
+
+Compare the reported update identities and revisions across nodes, then rerun
+only `./scripts/deploy.ps1 60` with the existing `ENV_FILE`. The unchanged native
+validation gate must pass before cluster creation. If the mismatch persists,
+stop and investigate actual update applicability; do not loop metadata searches,
+install arbitrary patches, clear caches or allowlist the warning. This recovery
+does not change the default initializer's narrower `0x80248014` behavior; a fresh
+unrepaired seven-server build remains an evidence gap.
 
 ### SQL readiness requires correct types and a bounded startup wait
 

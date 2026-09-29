@@ -396,18 +396,24 @@ function Assert-Throws {
     $expectedProcessors = @{
         'JS-DC-01' = 2
         'JS-SQL-01' = 6
-        'JS-SQL-AG-01' = 8
-        'JS-SQL-AG-02' = 8
+        'JS-SQL-AG-01' = 6
+        'JS-SQL-AG-02' = 6
+        'JS-RETAIL-01' = 4
+        'JS-INSIGHT-01' = 4
         'JS-UBUNTU-01' = 2
     }
     if ($definitions.Count -ne $expectedProcessors.Count -or
-        ($definitions | Measure-Object -Property Processors -Sum).Sum -ne 26) {
-        throw 'Stage 40 must assign exactly 26 guest virtual processors across five guests.'
+        ($definitions | Measure-Object -Property Processors -Sum).Sum -ne 30) {
+        throw 'Stage 40 must assign exactly 30 guest virtual processors across seven guests.'
     }
     foreach ($definition in $definitions) {
         if (-not $expectedProcessors.ContainsKey($definition.Name) -or
             $definition.Processors -ne $expectedProcessors[$definition.Name]) {
             throw "Unexpected processor allocation for $($definition.Name)."
+        }
+        if (($definition.Name -eq 'JS-RETAIL-01' -and $definition.Memory -ne 8) -or
+            ($definition.Name -eq 'JS-INSIGHT-01' -and $definition.Memory -ne 4)) {
+            throw 'New BI guests must use 8 GiB (mixed) and 4 GiB (SSAS-only).'
         }
     }
 

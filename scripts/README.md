@@ -22,6 +22,12 @@ inputs and required ready-environment outcome.
 | `./scripts/lab.ps1 status` / `start` / `stop` / `inventory` / `delete-infra <RG>` | Host power, modeling export and explicitly confirmed infrastructure cleanup. |
 | `./scripts/check-sql-media.ps1` | Optional local HTTPS media download and length/structure/SHA-256 verification; stage `45` has its own checks. |
 
+For customers, use the
+[single-query Resource Graph Explorer export](../docs/04-customer-arc-inventory.md)
+without a lab environment file. `lab.ps1 inventory` exports the same query's
+columns and full properties, scoped to the configured Arc group; its 1,000-row
+guard remains a lab-only limit, not a complete customer-estate export mechanism.
+
 From a PowerShell 7 terminal, set `$env:ENV_FILE` to the actual external file
 path, sign in with `az login`, then run `validate.ps1`, `preflight.ps1 infra`,
 and `deploy.ps1 all` **in order**, stopping on any failure. Keep deployment in a
@@ -216,3 +222,22 @@ create Azure resources or prove live provisioning.
 They also verify that image submission precedes network configuration, image
 completion is joined before guest creation, and failure of either prerequisite
 prevents stage `40`.
+
+## Isolated BI installer smoke test
+
+[`smoke-sql-features.ps1`](../artifacts/scripts/smoke-sql-features.ps1) is a
+guest-side diagnostic runner, not a deployment entry point. Use it only on
+separately approved disposable Windows VMs named `JS-RETAIL-01` or
+`JS-INSIGHT-01`, never as a repair shortcut on the live lab. The name check alone
+does not establish that a VM is disposable.
+
+Run as the VM's elevated local `Administrator`. Supply the repository's
+`45-install-sql-engine.ps1` content as `EngineScriptBase64` and a non-secret
+`RunId`; `VerifyOnly=true` checks existing features without installing them.
+For Managed Run Command, embed the large payload in script content instead of
+passing it through the process command line, and pass credentials only through
+protected parameters. The runner creates no Azure resources and does not
+prepare accounts. It verifies downloaded media and delegates installation to
+the saved engine script; exit `3010` requires a scoped reboot before a rerun.
+Service, edition, version and TCP checks do not establish authenticated SSAS
+application access or Arc assessment coverage.

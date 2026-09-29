@@ -22,10 +22,10 @@ function Assert-Throws {
     throw "Expected failure containing: $Message"
 }
 function Assert-EngineArguments {
-    param([string]$Arguments)
+    param([string]$Arguments, [string]$ExpectedFeatures = 'SQLENGINE')
     $features = [regex]::Matches($Arguments, '(?i)(?:^|\s)/FEATURES=([^\s]+)')
-    if ($features.Count -ne 1 -or $features[0].Groups[1].Value -cne 'SQLENGINE') {
-        throw 'Lab preparation must install FEATURES=SQLENGINE only.'
+    if ($features.Count -ne 1 -or $features[0].Groups[1].Value -cne $ExpectedFeatures) {
+        throw "Lab preparation must install FEATURES=$ExpectedFeatures only."
     }
     if ($Arguments -match '(?i)AZUREEXTENSION|(?:^|\s)/(?:AZURE|ARC)[A-Z]*|azcmagent|AzureConnectedMachineAgent') {
         throw 'Arc and Arc SQL extension onboarding must remain user-operated.'
@@ -50,6 +50,9 @@ function Get-EmbeddedScript {
 }
 $ast = Parse-Script (Get-Content $scriptPath -Raw)
 $engineAst = Parse-Script (Get-Content $enginePath -Raw)
+foreach ($name in @('Get-LabSqlFeatures', 'Get-InstalledFeatureNames', 'Get-SqlSetupArguments', 'Test-InstalledAnalysisServices')) {
+    . ([scriptblock]::Create((Get-FunctionText $engineAst $name)))
+}
 $guestLibrary = Get-EmbeddedScript guestLibrary
 $guestInstall = Get-EmbeddedScript guestInstall
 $sqlGuestWorker = Get-EmbeddedScript sqlGuestWorker
@@ -98,11 +101,25 @@ if (-not (Get-FunctionText $guestAst Get-SqlCmdPath).Contains('Client SDK\ODBC\1
 $pathText = Get-FunctionText $guestAst Set-SqlCmdMachinePath
 if (-not $pathText.Contains("SetEnvironmentVariable('Path', `$newPath, 'Machine')") -or
     -not $pathText.Contains('$env:Path = $newPath')) { throw 'PATH must be refreshed for both machine and current Direct session.' }
-foreach ($text in @('/FEATURES=SQLENGINE', '/SQLSYSADMINACCOUNTS=', '-Wait -PassThru', '$row.EditionId -ne -2117995310',
+foreach ($text in @('Get-SqlSetupArguments $missing', '/SQLSYSADMINACCOUNTS=', '-Wait -PassThru', '$row.EditionId -ne -2117995310',
     '$row.EngineEdition -ne 3', '$row.WindowsOnly -ne 1', '$row.IsSysadmin -ne 1')) {
     if (-not $engineAst.Extent.Text.Contains($text)) { throw "Missing proven engine contract: $text" }
 }
 Assert-EngineArguments '/Q /FEATURES=SQLENGINE'
+Assert-Equal ((Get-LabSqlFeatures JS-SQL-01) -join ',') 'SQLENGINE' 'Standalone remains engine only'
+Assert-Equal ((Get-LabSqlFeatures JS-RETAIL-01) -join ',') 'SQLENGINE,AS' 'Mixed guest profile'
+Assert-Equal ((Get-LabSqlFeatures JS-INSIGHT-01) -join ',') 'AS' 'BI-only guest profile'
+Assert-Throws { Get-LabSqlFeatures jsarc-host } 'No SQL feature profile'
+foreach ($vm in @('JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02', 'JS-RETAIL-01', 'JS-INSIGHT-01')) {
+    $features = @(Get-LabSqlFeatures $vm)
+    $arguments = Get-SqlSetupArguments $features
+    Assert-EngineArguments $arguments ($features -join ',')
+    if ('AS' -in $features -and $arguments -notmatch '/ASSERVERMODE=TABULAR') { throw 'SSAS must use Tabular mode.' }
+    if ($vm -eq 'JS-INSIGHT-01' -and $arguments -match '/SQLSVC|/AGTSVC|/SQLSYSADMIN') {
+        throw 'AS-only setup must not contain engine service or admin arguments.'
+    }
+}
+Assert-Throws { Get-SqlSetupArguments @('AS', 'AZUREEXTENSION') } 'Only explicit'
 foreach ($arguments in @('/FEATURES=SQLENGINE,AZUREEXTENSION', '/FEATURES=SQLENGINE /FEATURES=AZUREEXTENSION', '/FEATURES=SQL')) {
     Assert-Throws { Assert-EngineArguments $arguments } 'SQLENGINE only'
 }
@@ -117,7 +134,7 @@ foreach ($flag in @('/AZUREEXTENSION', '/AZURETENANTID=example', '/AZURESUBSCRIP
     }
     $selector = [scriptblock]::Create("[CmdletBinding()]`n" + $ast.ParamBlock.Extent.Text + "`n" + $guard.Extent.Text + "`n" + '$VmNames')
     $inputs = @{ NestedWindowsPassword = 'dummy'; SqlDownloadUrl = 'dummy'; RunId = 'test'; EngineScriptBase64 = 'dummy' }
-    Assert-Equal ((& $selector @inputs) -join ',') 'JS-SQL-01,JS-SQL-AG-01,JS-SQL-AG-02' 'Default all three guests'
+    Assert-Equal ((& $selector @inputs) -join ',') 'JS-SQL-01,JS-SQL-AG-01,JS-SQL-AG-02,JS-RETAIL-01,JS-INSIGHT-01' 'Default all five guests'
     Assert-Equal ((& $selector @inputs -VmNames JS-SQL-01) -join ',') 'JS-SQL-01' 'One guest smoke'
     Assert-Equal ((& $selector @inputs -VmNames JS-SQL-AG-02,JS-SQL-01) -join ',') 'JS-SQL-AG-02,JS-SQL-01' 'Preserve order'
     Assert-Throws { & $selector @inputs -VmNames @() } 'VmNames'
@@ -147,13 +164,25 @@ foreach ($flag in @('/AZUREEXTENSION', '/AZURETENANTID=example', '/AZURESUBSCRIP
     function New-Item { param($ItemType, $Path, [switch]$Force) }
     function Set-Content { param($Path, $Encoding, [Parameter(ValueFromPipeline)]$Value) process {} }
     function Get-ScheduledTask { param($TaskName, $ErrorAction) if ($script:queued) { @{ State = 'Queued' } } }
-    function Get-Process { param($Name, $ErrorAction) }
-    function Get-Service { param($Name, $ErrorAction) $script:services }
-    function Test-Path { param($Path) $Path -like '*Instance Names*' -and $script:names.Count -gt 0 }
+    function Get-Process {
+        param($Name, $ErrorAction)
+        if ($script:engineActiveSetup) { [pscustomobject]@{ ProcessName = 'setup'; Id = 123; Path = 'D:\setup.exe' } }
+    }
+    function Get-Service {
+        param($Name, $ErrorAction)
+        if ('MSSQLSERVER' -in $Name) { $script:services }
+        if ('MSSQLServerOLAPService' -in $Name) { $script:asServices }
+    }
+    function Test-Path {
+        param($Path)
+        ($Path -like '*Instance Names\SQL' -and $script:names.Count -gt 0) -or
+        ($Path -like '*Instance Names\OLAP' -and $script:asNames.Count -gt 0)
+    }
     function Get-ItemProperty {
         param($Path)
         $p = [ordered]@{}
-        foreach ($name in $script:names) { $p[$name] = 'id' }
+        $names = if ($Path -like '*\OLAP') { $script:asNames } else { $script:names }
+        foreach ($name in $names) { $p[$name] = 'id' }
         [pscustomobject]$p
     }
     function Get-ChildItem { param($Path, [switch]$Directory, $ErrorAction) if ($script:orphaned) { 'orphan' } }
@@ -165,20 +194,30 @@ foreach ($flag in @('/AZUREEXTENSION', '/AZURETENANTID=example', '/AZURESUBSCRIP
     function Get-Volume { param([Parameter(ValueFromPipeline)]$InputObject) process { @{ DriveLetter = 'D' } } }
     function Get-AuthenticodeSignature { param($Path) @{ Status = 'Valid'; SignerCertificate = @{ Subject = 'O=Microsoft Corporation,C=US' } } }
     function Test-InstalledEngine { if ($script:badEngine) { throw 'wrong edition or authentication' }; @{ EditionId = -2117995310 } }
+    function Test-InstalledAnalysisServices { if ($script:badAs) { throw 'SSAS unavailable' }; @{ Mode = 'Tabular'; Port = 2383 } }
     function Start-Process {
         param($FilePath, $ArgumentList, [switch]$Wait, [switch]$PassThru, $RedirectStandardOutput, $RedirectStandardError)
         if (-not $Wait -or -not $PassThru) { throw 'Engine must use proven synchronous wait.' }
-        Assert-EngineArguments $ArgumentList
+        Assert-EngineArguments $ArgumentList $script:expectedFeatures
         $script:engineStarts++
         @{ ExitCode = $script:engineCode }
     }
+    $savedComputerName = $env:COMPUTERNAME
+    $env:COMPUTERNAME = 'JS-SQL-01'
+    $script:asServices = @(); $script:asNames = @(); $script:badAs = $false
+    $script:expectedFeatures = 'SQLENGINE'
     $script:queued = $false; $script:orphaned = $false; $script:badEngine = $false
     $script:services = @(@{ Name = 'MSSQLSERVER' }); $script:names = @('MSSQLSERVER')
     $script:engineStarts = 0
+    $script:engineActiveSetup = $false
     $result = [ordered]@{ Status = 'Running'; Engine = $null; Error = ''; SetupExitCode = $null }
     & $engineCode
     Assert-Equal $result.Status 'VerifiedExisting' 'Healthy engine must be reused'
     Assert-Equal $script:engineStarts 0 'Never replace healthy engine'
+    $script:engineActiveSetup = $true
+    Assert-Throws { & $engineCode } 'PID=123 Path=D:\setup.exe'
+    Assert-Equal $script:engineStarts 0 'Active installer gate must not start or replace SQL'
+    $script:engineActiveSetup = $false
     $script:badEngine = $true
     Assert-Throws { & $engineCode } 'wrong edition'
     $script:badEngine = $false
@@ -199,6 +238,96 @@ foreach ($flag in @('/AZUREEXTENSION', '/AZURETENANTID=example', '/AZURESUBSCRIP
             Assert-Equal $result.Status $(if ($code -eq 0) { 'InstalledAndVerified' } else { 'RebootRequired' }) 'Engine completion status'
         }
     }
+    $script:engineCode = 0
+    foreach ($vm in @('JS-RETAIL-01', 'JS-INSIGHT-01')) {
+        $env:COMPUTERNAME = $vm
+        $script:expectedFeatures = (Get-LabSqlFeatures $vm) -join ','
+        & $engineCode
+        Assert-Equal $result.Status 'InstalledAndVerified' 'New BI feature installation'
+    }
+    $script:services = @(@{ Name = 'MSSQLSERVER' }); $script:names = @('MSSQLSERVER')
+    Assert-Throws { & $engineCode } 'Unexpected SQLENGINE'
+    $script:services = @(); $script:names = @()
+    $script:asServices = @(@{ Name = 'MSSQLServerOLAPService' }); $script:asNames = @('MSSQLSERVER')
+    & $engineCode
+    Assert-Equal $result.Status 'VerifiedExisting' 'Reuse an existing AS-only instance'
+    $script:badAs = $true
+    Assert-Throws { & $engineCode } 'SSAS unavailable'
+    $script:badAs = $false
+    $script:asNames = @('OTHER')
+    Assert-Throws { & $engineCode } 'automatic repair or replacement is forbidden'
+    $script:asServices = @(); $script:asNames = @()
+    $env:COMPUTERNAME = 'JS-RETAIL-01'
+    $script:services = @(@{ Name = 'MSSQLSERVER' }); $script:names = @('MSSQLSERVER')
+    $script:expectedFeatures = 'AS'
+    & $engineCode
+    Assert-Equal $result.Status 'InstalledAndVerified' 'Add only missing AS while retaining a healthy engine'
+    $env:COMPUTERNAME = 'JS-SQL-01'
+    $script:asServices = @(@{ Name = 'MSSQLServerOLAPService' }); $script:asNames = @('MSSQLSERVER')
+    Assert-Throws { & $engineCode } 'Unexpected AS'
+    $env:COMPUTERNAME = 'JS-INSIGHT-01'
+    $script:services = @(); $script:names = @()
+    $script:asServices = @(); $script:asNames = @()
+    $VerifyOnly = $true
+    Assert-Throws { & $engineCode } 'Required features are missing'
+    $VerifyOnly = $false
+    $env:COMPUTERNAME = $savedComputerName
+}
+
+& {
+    $probe = [scriptblock]::Create(
+        (Get-FunctionText $engineAst Test-InstalledAnalysisServices).
+            Replace('[Net.Sockets.TcpClient]::new()', '(New-FakeAsClient)') +
+        "`nTest-InstalledAnalysisServices")
+    function Get-Service { param($Name, $ErrorAction) @{ Name = $Name; Status = $script:asState } }
+    function Get-Item { param($Path, $ErrorAction) @{ VersionInfo = @{ ProductMajorPart = $script:asMajor; ProductVersion = '17.0' } } }
+    function Get-ItemProperty { param($Path, $ErrorAction) @{ Edition = $script:asEdition } }
+    function Get-Content { param($Path, [switch]$Raw, $ErrorAction) "<ConfigurationSettings><DeploymentMode>$script:asMode</DeploymentMode></ConfigurationSettings>" }
+    function New-FakeAsClient {
+        $client = [pscustomobject]@{}
+        $client | Add-Member ScriptMethod ConnectAsync {
+            param($Address, $Port)
+            if ($Address -ne 'localhost' -or $Port -ne 2383) { throw 'Wrong SSAS endpoint.' }
+            $pending = [pscustomobject]@{}
+            $pending | Add-Member ScriptMethod Wait { param($Timeout) $script:asListening }
+            $pending
+        }
+        $client | Add-Member ScriptMethod Dispose { $script:asDisposed++ }
+        $client
+    }
+    $script:asState = 'Running'; $script:asMajor = 17; $script:asMode = 2; $script:asEdition = 'Developer Edition'
+    $script:asListening = $true; $script:asDisposed = 0
+    Assert-Equal (& $probe).Port 2383 'SSAS endpoint verified'
+    Assert-Equal $script:asDisposed 1 'Dispose the connectivity probe'
+    $script:asListening = $false
+    Assert-Throws { & $probe } 'did not accept a connection'
+    Assert-Equal $script:asDisposed 2 'Dispose on a failed connectivity probe'
+    $script:asListening = $true
+    $script:asState = 'Stopped'
+    Assert-Throws { & $probe } 'must be running'
+    $script:asState = 'Running'; $script:asMajor = 16
+    Assert-Throws { & $probe } 'must be running'
+    $script:asMajor = 17; $script:asMode = 0
+    Assert-Throws { & $probe } 'Tabular mode'
+    $script:asMode = 2
+    foreach ($edition in @('Standard Developer Edition', 'Evaluation Edition', 'Enterprise Edition', '')) {
+        $script:asEdition = $edition
+        Assert-Throws { & $probe } 'must be Enterprise Developer'
+    }
+}
+
+& {
+    $script:readyAttempts = 0
+    function Test-SqlReady {
+        $script:readyAttempts++
+        if ($script:readyAttempts -lt 3) { throw 'SSAS service is starting; RETAIL engine not yet ready.' }
+        $true
+    }
+    function Start-Sleep { param($Seconds) }
+    Assert-Equal (Wait-SqlReady -TimeoutSeconds 600) $true 'Service startup is retried before post-domain verification'
+    Assert-Equal $script:readyAttempts 3 'Wait for application readiness, not only heartbeat'
+    $script:readyAttempts = 0
+    Assert-Throws { Wait-SqlReady -TimeoutSeconds 0 } 'SQL did not pass live readiness'
 }
 
 & {
@@ -370,7 +499,12 @@ if ((Parse-Script $downloadText).Find({
     function Get-SqlCmdPath { if ($script:cliPresent) { 'sqlcmd.exe' } }
     function Start-Process { throw 'No separate native installer is permitted in guest orchestration.' }
     function Set-SqlCmdMachinePath { param($SqlCmdPath) $script:pathRefreshes++ }
-    function Wait-SqlReady { $script:readinessCalls++; $true }
+    function Wait-SqlReady {
+        param($TimeoutSeconds)
+        $script:readinessCalls++
+        $script:readinessTimeout = $TimeoutSeconds
+        $true
+    }
     function Set-Content {
         param($Path, $Encoding, [Parameter(ValueFromPipeline)]$Value)
         process { if ($script:saveFailure) { throw 'cannot save result' } }
@@ -408,7 +542,45 @@ if ((Parse-Script $downloadText).Find({
     $script:transferHash = 'corrupt'
     Assert-Throws { & $code } 'Transferred media hash mismatch'
     Assert-Equal $script:engineInvocations 0 'No engine invocation with corrupt payload'
+    $savedComputerName = $env:COMPUTERNAME
+    try {
+        $env:COMPUTERNAME = 'JS-INSIGHT-01'
+        Reset-GuestScenario
+        function Get-SqlCmdPath { throw 'AS-only installation must never require sqlcmd.' }
+        $out = & $code
+        Assert-Equal $out.Status 'Verified' 'SSAS-only guest completes without engine tools'
+        Assert-Equal $script:readinessCalls 1 'SSAS-only guest still passes live readiness'
+        Assert-Equal $script:readinessTimeout 600 'BI readiness allows bounded setup cleanup and service startup'
+        $script:guestDeadlineUtc = [DateTime]::UtcNow.AddSeconds(180)
+        $out = & $code
+        if ($script:readinessTimeout -lt 1 -or $script:readinessTimeout -gt 180) {
+            throw 'BI readiness exceeded the remaining guest deadline.'
+        }
+    }
+    finally { $env:COMPUTERNAME = $savedComputerName }
     $script:guestDeadlineUtc = $null
+}
+
+& {
+    $savedComputerName = $env:COMPUTERNAME
+    try {
+        $code = [scriptblock]::Create(
+            (Get-FunctionText $guestAst Test-SqlReady).
+                Replace("& 'C:\ArcJumpstart\Sql2025\45-install-sql-engine.ps1'", 'Invoke-FakeFeatureVerification') +
+            "`nTest-SqlReady")
+        function Get-Service { throw 'AS-only readiness must not probe MSSQLSERVER.' }
+        function Invoke-FakeFeatureVerification {
+            param([switch]$VerifyOnly, [switch]$PassThru)
+            if (-not $VerifyOnly -or -not $PassThru) { throw 'Readiness must never invoke Setup.' }
+            @{ Status = 'VerifiedExisting'; AnalysisServices = @{ Port = 2383 }; Engine = $script:unexpectedEngine }
+        }
+        $env:COMPUTERNAME = 'JS-INSIGHT-01'
+        $script:unexpectedEngine = $null
+        Assert-Equal (& $code) $true 'AS-only readiness does not depend on engine services or CLI'
+        $script:unexpectedEngine = @{ Edition = 'Developer' }
+        Assert-Throws { & $code } 'must not have a relational engine'
+    }
+    finally { $env:COMPUTERNAME = $savedComputerName }
 }
 
 # Only fresh idle guests may reboot before setup; completed setup may request one more.
@@ -444,7 +616,10 @@ if ((Parse-Script $downloadText).Find({
         if ($Path -like '*RebootRequired') { return $script:updatePending }
         $false
     }
-    function Copy-SqlPayload { param($VMName, $Files) }
+    function Copy-SqlPayload {
+        param($VMName, $Files)
+        if ($script:pendingDuringCopy) { $script:pending = $true }
+    }
     function New-PSSession { param($VMName, $Credential, $ErrorAction) 'session' }
     function Remove-PSSession { param($Session, $ErrorAction) $script:closed++ }
     function Write-StageLog { param($Message) }
@@ -458,6 +633,7 @@ if ((Parse-Script $downloadText).Find({
     $script:pending = $false; $script:updatePending = $false; $script:persistentPending = $false
     $script:activeTask = $false; $script:activeInstaller = $false
     $script:installed = $false; $script:partialFiles = $false
+    $script:pendingDuringCopy = $false
     $script:statuses = [Collections.Generic.Queue[string]]::new()
     $script:statuses.Enqueue('Verified')
     Complete-SqlGuest JS-SQL-01
@@ -501,6 +677,14 @@ if ((Parse-Script $downloadText).Find({
     $script:invokeFailure = $true
     Assert-Throws { Complete-SqlGuest JS-SQL-01 } 'native failure 1603'
     Assert-Equal $script:reboots 5 'Never reboot on native failure'
+    $script:invokeFailure = $false
+    $script:pending = $false
+    $script:pendingDuringCopy = $true
+    $script:statuses.Enqueue('Verified')
+    Complete-SqlGuest JS-SQL-01
+    Assert-Equal $script:reboots 6 'Recheck reboot prerequisites after copying the media'
+    Assert-Equal $script:statuses.Count 0 'Install only after the late servicing gate clears'
+    $script:pendingDuringCopy = $false
     $script:phaseDeadlineUtc = $null
 }
 & {
@@ -593,16 +777,16 @@ if ($heldText.Contains('Get-SqlPayload')) { throw 'Guest workers must not race o
     function Start-Sleep { param($Seconds) }
     function Write-StageLog { param($Message) }
     function Reset-ParallelScenario {
-        $script:payloadCalls = 0; $script:starts = 0; $script:expectedStarts = 3
+        $script:payloadCalls = 0; $script:starts = 0; $script:expectedStarts = 5
         $script:events = @(); $script:jobs = @(); $script:removed = 0; $script:peak = 0
         $script:guestFailure = ''; $script:launchFailure = ''; $script:processFailure = ''; $script:cleanupFailure = ''; $script:waitFailure = $false
     }
-    $all = @('JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02')
+    $all = @('JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02', 'JS-RETAIL-01', 'JS-INSIGHT-01')
     Reset-ParallelScenario
     Invoke-ParallelSqlGuests $all
     Assert-Equal ($script:events[0..3] -join ',') 'payload,start:JS-SQL-01,start:JS-SQL-AG-01,start:JS-SQL-AG-02' 'Download then launch all before waiting'
-    Assert-Equal $script:peak 3 'Default concurrency is three, never more'
-    Assert-Equal $script:removed 3 'Drain and remove every completed worker'
+    Assert-Equal $script:peak 5 'Default concurrency is five, never more'
+    Assert-Equal $script:removed 5 'Drain and remove every completed worker'
     foreach ($selection in @(@('JS-SQL-01'), @('JS-SQL-AG-02', 'JS-SQL-01'))) {
         Reset-ParallelScenario
         $script:expectedStarts = $selection.Count
@@ -618,7 +802,7 @@ if ($heldText.Contains('Get-SqlPayload')) { throw 'Guest workers must not race o
         if ($failureKind -eq 'waitFailure') { $script:waitFailure = $true }
         else { Set-Variable -Scope Script -Name $failureKind -Value 'JS-SQL-01' }
         Assert-Throws { Invoke-ParallelSqlGuests $all } 'after all started workers finished'
-        Assert-Equal $script:starts 3 'One failed guest/launch must not prevent other starts'
+        Assert-Equal $script:starts 5 'One failed guest/launch must not prevent other starts'
         Assert-Equal @($script:jobs | Where-Object State -eq 'Running').Count 0 'All started siblings finish before aggregated failure'
         Assert-Equal $script:removed $script:jobs.Count 'All started workers are collected on failure'
         if ($script:events -notcontains 'receive:JS-SQL-AG-02') { throw 'Final sibling must be collected despite earlier failure.' }

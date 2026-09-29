@@ -77,12 +77,24 @@ try {
             $csv = Join-Path $destination 'inventory.csv'
             [System.IO.File]::WriteAllText($raw, ($response.Output.TrimEnd() + "`n"),
                 [System.Text.UTF8Encoding]::new($false))
-            $fields = @('RecordType', 'JoinKey', 'ParentJoinKey', 'ResourceId',
-                'ResourceName', 'SubscriptionId', 'ResourceGroup', 'Location',
-                'Tags', 'Properties')
+            $fields = @('ExportedAtUtc', 'id', 'RecordType', 'JoinKey', 'ParentJoinKey', 'ResourceId',
+                'ResourceName', 'ResourceType', 'SubscriptionId', 'ResourceGroup', 'Location',
+                'MachineResourceId', 'SqlInstanceResourceId', 'MachineStatus', 'OsName', 'OsVersion',
+                'LogicalCoreCount', 'MemoryGiB', 'SqlInstanceName', 'SqlServiceType', 'SqlVersion',
+                'SqlEdition', 'SqlHostCoreCount', 'ExtensionType', 'ExtensionVersion',
+                'FailoverCluster', 'AvailabilityGroupInfo', 'AvailabilityGroupReplicas',
+                'AvailabilityGroupDatabases', 'AssessmentEnabled', 'AssessmentUploadTime',
+                'SqlMiRecommendation', 'SqlDbRecommendation', 'SqlVmRecommendation',
+                'ServerAssessments', 'MigrationAssessment', 'BestPracticesAssessment', 'Tags', 'Properties')
             $records = foreach ($row in $rows) {
                 $record = [ordered]@{}
-                foreach ($field in $fields) { $record[$field] = $row.$field }
+                foreach ($field in $fields) {
+                    $fieldValue = $row.$field
+                    if ($fieldValue -is [datetime] -or $fieldValue -is [datetimeoffset]) {
+                        $fieldValue = $fieldValue.ToUniversalTime().ToString('o')
+                    }
+                    $record[$field] = $fieldValue
+                }
                 [pscustomobject]$record
             }
             if ($records) {

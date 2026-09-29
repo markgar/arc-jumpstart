@@ -11,11 +11,11 @@ stage `60`, and staging the Arc launchers.
 |---|---|
 | Azure host, networking, disks and images | Open the staged launcher and authenticate Arc |
 | Nested guests, Windows setup and domain services | Perform or reuse an assessment |
-| Three SQL installations, sample data, cluster, AG and listener | Export Resource Graph modeling data |
+| Four Database Engine and two SSAS installations, sample data, cluster, AG and listener | Export Resource Graph modeling data |
 | Arc resource group, SQL licensing tag and desktop launchers | Migrate `JumpstartStandaloneDB` to SQL Managed Instance |
 
-The defaults produce five nested VMs: `JS-DC-01`, `JS-SQL-01`,
-`JS-SQL-AG-01`, `JS-SQL-AG-02` and `JS-UBUNTU-01`. The domain is
+The defaults produce seven nested VMs: `JS-DC-01`, `JS-SQL-01`,
+`JS-SQL-AG-01`, `JS-SQL-AG-02`, `JS-RETAIL-01`, `JS-INSIGHT-01` and `JS-UBUNTU-01`. The domain is
 `jumpstart.lab`; the AG is `JS-AG-01`.
 
 ## Inputs to obtain once
@@ -208,7 +208,7 @@ instead of replaying infrastructure stages.
 
 Monitor execution rather than asking the learner to perform routine setup
 between stages. Stage `30` downloads approximately 38 GiB of images; stage `45`
-downloads SQL media once and installs on three guests in parallel. A quiet
+downloads SQL media once and installs assigned SQL/SSAS features on five guests in parallel. A quiet
 terminal is not proof of a hang, and a running VM is not proof that SQL is ready.
 
 Use `./scripts/lab.ps1 build-status` as the normal one-shot check during long
@@ -268,6 +268,47 @@ scope. Ask for a decision when credentials/permissions are unavailable or a
 repair requires a new cost, destructive reset or material design change.
 Routine infrastructure setup is not a learner exercise.
 
+## Measured build duration
+
+Tell the learner: **"Building the environment could take 2 hours."** This estimate
+is for the seven-server topology on `Standard_E16s_v7`. Actual time varies with
+downloads and any required recovery; two hours is not a guaranteed upper limit.
+It is based on one observed build, not a clean-run benchmark.
+
+The September 29, 2026 run started validation at **17:12:43 UTC** and the final
+Arc-launcher deployment returned successfully at approximately **19:04:36 UTC**:
+**1 hour 51 minutes 53 seconds**, including investigation and scoped retries.
+Post-deployment handoff checks are additional. The successful Managed Run Command
+execution intervals below exclude ARM submission, wrapper waits and host restart
+time; do not add them together to estimate end-to-end duration.
+
+| Operation | Successful execution (UTC) | Duration |
+|---|---|---|
+| Host initialization (`10`) | 17:19:03-17:21:34 | 2m 31s |
+| Networking (`20`) | 17:25:42-17:26:11 | 29s |
+| Images (`30`, overlapping `20`) | 17:24:20-17:25:49 | 1m 29s |
+| Seven nested guests (`40`) | 17:27:15-17:39:01 | 11m 46s |
+| SQL/SSAS recovery (`45`) | 18:10:06-18:16:35 | 6m 29s |
+| Domain configuration (`50`) | 18:17:47-18:37:36 | 19m 49s |
+| Cluster/AG recovery (`60`) | 18:54:19-18:57:31 | 3m 12s |
+| Host SSMS | 18:58:20-19:03:04 | 4m 44s |
+| Arc desktop launchers | 19:04:03-19:04:09 | 6s |
+
+The first SQL attempt was submitted at 17:39:39 UTC and failed at 18:03:03 UTC.
+Its successful retry retained already installed instances; **6m 29s is not a
+fresh five-guest SQL installation estimate**. The first cluster attempt also
+failed, at 18:43:48 UTC, on stale OLE DB installed-update metadata. A bounded
+metadata refresh preceded the successful retry. See the
+[recovery evidence](02-sql-ag-lessons.md). Neither recovery weakened native
+readiness or cluster-validation gates.
+
+For subsequent measurements, record the local workflow start/end and each
+canonical Run Command's `instanceView.startTime`, `endTime`, `executionState`
+and `exitCode` before a retry replaces that attempt. Record failures and
+investigation gaps separately. ARM acceptance or deployment timestamps alone
+do not measure asynchronous guest execution. A fresh complete run without
+these interventions is still required to claim clean end-to-end repeatability.
+
 ## Definition of ready
 
 Do not hand off solely because the outer VM exists or an ARM deployment says
@@ -276,13 +317,14 @@ Do not hand off solely because the outer VM exists or an ARM deployment says
 | Area | Required handoff state |
 |---|---|
 | Deployment | Stages through `60` succeeded; asynchronous script executions are terminal with exit `0`; no unresolved installer or configuration operation remains. |
-| Guests | The five intended nested guests exist and are running; Linux boot/access is usable, and the four Windows guests completed native setup, activation, and Enhanced Session Mode prerequisites. |
+| Guests | The seven intended nested guests exist and are running; Linux boot/access is usable, and the six Windows guests completed native setup, activation, and Enhanced Session Mode prerequisites. |
 | Domain | Expected domain, DNS locator records, SYSVOL/NETLOGON and SQL service account; SQL members have healthy secure channels. |
-| SQL | Three SQL Server 2025 Enterprise Developer instances with intended administrative access; both AG engines use the configured domain service identity. |
+| SQL | Four SQL Server 2025 Enterprise Developer Database Engine instances with intended administrative access; both AG engines use the configured domain service identity. `JS-SQL-01` stays engine-only. |
+| SSAS | `JS-RETAIL-01` and `JS-INSIGHT-01` run SSAS 2025 Tabular with TCP 2383 reachable from the host; no BI models are deployed. `JS-INSIGHT-01` has no relational engine services, registry instances or orphaned instance files. SSAS application authentication and assessment visibility are separate checks, not implied by a listening port. |
 | Cluster | Both intended nodes `Up`, correct cluster computer account and configured file-share witness online. |
 | AG | One primary and one secondary; `JumpstartDB` synchronized, healthy and not suspended on both. |
 | Listener | Intended DNS/IP and TCP `1433`, plus an actual integrated-authentication SQL query from the standalone guest to the primary database. |
-| Migration sample | `JumpstartStandaloneDB` online on `JS-SQL-01`. |
+| Relational samples | `JumpstartStandaloneDB` online on `JS-SQL-01`; `JumpstartRetailDB` on `JS-RETAIL-01`. The migration exercise still uses `JS-SQL-01`. |
 | Arc handoff | Dedicated Arc resource group and licensing tag exist; **Connect to Azure Arc.cmd** is staged on every Windows guest. |
 | Configuration handoff | The actual full `ENV_FILE` path, execution host, and platform-specific find/view instructions have been explicitly presented to the user without exposing file contents. |
 | User boundary | Arc launchers are staged, but no Arc connection, assessment, collector installation or migration has been performed. |

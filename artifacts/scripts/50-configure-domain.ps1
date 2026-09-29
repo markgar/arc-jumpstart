@@ -21,6 +21,10 @@ param(
     [Parameter(Mandatory)]
     [string]$AgNode2StaticIp,
 
+    [string]$RetailStaticIp = '192.168.128.14',
+
+    [string]$InsightStaticIp = '192.168.128.15',
+
     [Parameter(Mandatory)]
     [string]$NestedGatewayIp,
 
@@ -191,7 +195,7 @@ function Invoke-GuestWithRetry {
 
 try {
     $dcName = 'JS-DC-01'
-    $memberNames = @('JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02')
+    $memberNames = @('JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02', 'JS-RETAIL-01', 'JS-INSIGHT-01')
     $localCredential = New-PlainTextCredential -Username "$dcName\Administrator" -Password $NestedWindowsPassword
     $domainCredential = New-PlainTextCredential `
         -Username "$DomainNetbiosName\Administrator" `
@@ -370,6 +374,8 @@ try {
         'JS-SQL-01' = $StandaloneSqlStaticIp
         'JS-SQL-AG-01' = $AgNode1StaticIp
         'JS-SQL-AG-02' = $AgNode2StaticIp
+        'JS-RETAIL-01' = $RetailStaticIp
+        'JS-INSIGHT-01' = $InsightStaticIp
     }
 
     foreach ($memberName in $memberNames) {
@@ -439,6 +445,30 @@ try {
             Restart-VM -Name $memberName -Force
             Wait-VMHeartbeat -VMName $memberName
         }
+
+        if ($memberName -in @('JS-RETAIL-01', 'JS-INSIGHT-01')) {
+            Invoke-GuestWithRetry -VMName $memberName -Credential $memberCredential `
+                -ArgumentList $DomainName, "$DhcpScopeId/24" -ScriptBlock {
+                    param($ExpectedDomain, $NestedSubnetCidr)
+                    if ((Get-CimInstance Win32_ComputerSystem).Domain -ne $ExpectedDomain -or
+                        -not (Test-ComputerSecureChannel -ErrorAction Stop)) {
+                        throw 'BI guest domain membership or secure channel is not healthy.'
+                    }
+                    . 'C:\ArcJumpstart\Sql2025\guest-library.ps1'
+                    $null = Wait-SqlReady -TimeoutSeconds 600
+                    $result = & 'C:\ArcJumpstart\Sql2025\45-install-sql-engine.ps1' -VerifyOnly -PassThru
+                    if ($result.Status -ne 'VerifiedExisting' -or -not $result.AnalysisServices) {
+                        throw 'SSAS did not pass post-domain verification.'
+                    }
+                    Get-NetFirewallRule -DisplayName 'Arc Jumpstart Analysis Services' -ErrorAction SilentlyContinue |
+                        Remove-NetFirewallRule
+                    New-NetFirewallRule -DisplayName 'Arc Jumpstart Analysis Services' `
+                        -Direction Inbound -Protocol TCP -LocalPort 2383 `
+                        -RemoteAddress $NestedSubnetCidr -Action Allow | Out-Null
+                }
+            Wait-LabTcpPort -Address $memberAddresses[$memberName] -Port 2383
+        }
+        if ($memberName -eq 'JS-INSIGHT-01') { continue }
 
         Invoke-GuestWithRetry `
             -VMName $memberName `
@@ -516,7 +546,7 @@ IF IS_SRVROLEMEMBER(N'sysadmin', N'$domainAdmins') <> 1
             Select-Object Name, DNSHostName, Enabled |
             Format-Table -AutoSize
     }
-    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage50] Domain, DNS, member trust, domain-admin SQL access, and host-to-SQL TCP checks completed."
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage50] Domain, DNS, member trust, domain-admin SQL access, and SQL/SSAS TCP checks completed."
 }
 finally {
     Stop-Transcript

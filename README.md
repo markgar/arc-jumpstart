@@ -52,12 +52,15 @@ flowchart LR
     NAT --> SQL["JS-SQL-01<br/>standalone SQL"]
     NAT --> AG1["JS-SQL-AG-01<br/>AG primary"]
     NAT --> AG2["JS-SQL-AG-02<br/>AG secondary"]
+    NAT --> Mixed["JS-RETAIL-01<br/>SQL + SSAS"]
+    NAT --> BI["JS-INSIGHT-01<br/>SSAS only"]
     NAT --> Linux["JS-UBUNTU-01"]
     AG1 <--> AG2
 ```
 
-The agent prepares the domain, three SQL Server 2025 Enterprise Developer
-instances, sample databases, WSFC, availability group, listener, Arc resource
+The agent prepares the domain, four SQL Server 2025 Enterprise Developer
+Database Engine instances, two SSAS Tabular instances (without models), sample
+relational databases, WSFC, availability group, listener, Arc resource
 group, host-only SSMS 22 and desktop launchers. SSMS installation runs
 independently after the numbered stages by default; on an existing host, use
 `./scripts/deploy.ps1 ssms` to install or verify it without replaying `all`.
@@ -66,10 +69,29 @@ with their own Azure identity. The workshop starts after Arc inventory is ready:
 perform or reuse an assessment, export modeling data, and migrate
 `JumpstartStandaloneDB` to a small SQL managed instance.
 
+**Building the environment could take 2 hours.** Actual time varies with
+downloads and any required recovery. See the
+[measured build duration](docs/00-agent-bootstrap.md#measured-build-duration).
+
 This is a disposable evaluation environment. The default outer host is
 `Standard_E16s_v7` in `westus2`, with a 1 TiB Premium SSD and optional Azure
 Bastion. Review current Azure pricing, quota, licensing, and auto-shutdown
 before deployment.
+
+| Guest | Workload | Virtual cores | Startup RAM |
+|---|---|---:|---:|
+| `JS-DC-01` | AD DS and DNS | 2 | 4 GiB |
+| `JS-SQL-01` | SQL Database Engine only | 6 | 8 GiB |
+| `JS-SQL-AG-01` | SQL AOAG replica | 6 | 8 GiB |
+| `JS-SQL-AG-02` | SQL AOAG replica | 6 | 8 GiB |
+| `JS-RETAIL-01` | SQL Database Engine + SSAS | 4 | 8 GiB |
+| `JS-INSIGHT-01` | SSAS only, no Database Engine | 4 | 4 GiB |
+| `JS-UBUNTU-01` | Linux | 2 | 4 GiB |
+
+The seven guests have 30 assigned virtual cores on the 16-vCPU host. SSAS uses
+the same non-production Developer media; no SSIS or sample BI models are
+installed. SSAS discovery and assessment coverage must be verified separately
+from relational SQL inventory; see the [assessment guide](docs/04-assessment.md).
 
 ## Prerequisites
 
@@ -177,6 +199,7 @@ necessarily your laptop; the handoff must identify the host and how to access it
 - [Deployment, access, and SSMS](docs/02-deploy.md)
 - [Complete user-authenticated Arc setup](docs/03-arc-onboarding.md)
 - [Azure Migrate assessment](docs/04-assessment.md)
+- [Customer Arc inventory: one query and one CSV export](docs/04-customer-arc-inventory.md)
 - [Migrate one database to SQL Managed Instance](docs/05-migration.md)
 - [Troubleshooting, shutdown, and cleanup](docs/06-troubleshooting-cleanup.md)
 

@@ -96,35 +96,48 @@ depends on Bastion. Even a rejected Bastion submission is reported separately
 and does not stop the core build. Set `DEPLOY_BASTION=false` to omit that request.
 
 Stage `40` prepares and verifies a generalized Windows parent before cloning all
-four Windows guests. It validates Sysprep evidence offline, rejects stale parent
+six Windows guests. It validates Sysprep evidence offline, rejects stale parent
 markers or conflicting child disks, and checks OOBE, activation, and unique
 machine SIDs before continuing. Do not manually alter the parent, readiness
 markers, or guest setup state. See the
 [SQL AG lessons](02-sql-ag-lessons.md#prepare-windows-first-then-install-sql-on-each-clone)
 for implementation history and recovery boundaries.
 The new-build allocation is 6 virtual processors for the standalone SQL guest,
-8 for each AG guest, and 2 each for the DC and Ubuntu guests. This intentionally
-overcommits the default 16-vCPU outer host (26 assigned guest processors);
+6 for each AG guest, 4 each for `JS-RETAIL-01` and `JS-INSIGHT-01`, and 2 each
+for the DC and Ubuntu guests. This intentionally
+overcommits the default 16-vCPU outer host (30 assigned guest processors);
 parallel SQL operations may contend for CPU. On a stage `40` retry, a guest
 whose existing processor count differs is preserved and reported rather than
 resized; use deliberate recovery or build a fresh lab, not `deploy.ps1 all`
 against an existing domain.
 
-Stage `45` downloads SQL Server 2025 Enterprise Developer media once to the host's persistent disk and installs the default database-engine instance on each of the three SQL guests. It uses the ODBC driver and `sqlcmd` tooling supplied by SQL Setup rather than installing an older command-line utility separately. Installation uses Windows authentication and grants the guest's local Administrator SQL sysadmin access; no SQL authentication password is configured. Stage `50` later grants the lab domain administrators SQL access, and stage `60` configures the domain service account and availability group through SQL Server's native WMI provider.
+The seven-server topology is a new-build default, not an in-place expansion
+procedure for an older five-server lab. Do not run stage `40` against a promoted
+domain to add the BI guests. Use a separately approved fresh target, or reuse
+the same private configuration only after both previous target groups are gone.
 
-After preparing the shared media cache, stage `45` processes the three SQL guests
+Stage `45` downloads SQL Server 2025 Enterprise Developer media once to the host's persistent disk and installs the default Database Engine on the three original SQL guests and `JS-RETAIL-01`. It also installs default SSAS Tabular instances on `JS-RETAIL-01` and `JS-INSIGHT-01`, with no models. `JS-INSIGHT-01` must have no relational engine. Engine guests use the ODBC driver and `sqlcmd` tooling supplied by SQL Setup rather than a separate installer. Installation uses Windows authentication and grants the guest's local Administrator SQL sysadmin access; no SQL authentication password is configured. Stage `50` later grants the lab domain administrators SQL access, and stage `60` configures the domain service account and availability group through SQL Server's native WMI provider.
+
+After preparing the shared media cache, stage `45` processes the five SQL/SSAS guests
 in parallel, with at most one worker per guest. Each worker holds its own
 PowerShell Direct session and waits synchronously for that guest's SQL Setup.
 Parallelism is between guests, never between installers on the same guest.
 Guest diagnostics remain separate. If one worker fails, the stage still waits
 for the other started workers to finish, then reports failure; it does not stop
 their installers or allow stage `50` to proceed. Healthy instances are retained
-on a retry. Shared host CPU and disk bandwidth mean three simultaneous installs
+on a retry. Shared host CPU and disk bandwidth mean five simultaneous installs
 are not guaranteed to take the same time as a single install.
 
 Running stage `45` accepts Microsoft's installer license terms. Developer edition is for development, testing, and training, not production. The host must be able to reach the Microsoft download endpoints and any redirect destinations. Guest installation runs synchronously as the guest's local Administrator through a held PowerShell Direct session and preserves setup diagnostics; it does not create an installation scheduled task. The stage checks SQL queries and sysadmin access before succeeding; a running Windows guest or SQL service alone is insufficient. A rerun verifies and retains a healthy installation rather than reinstalling it. A conflicting or broken existing instance is reported for investigation, not silently overwritten. Use `./scripts/lab.ps1 stage-log 45` for the host log.
 
-Stage `45` installs `SQLENGINE` only, not `AZUREEXTENSION`. Stages `00` through
+Stage `45` selects `SQLENGINE`, `SQLENGINE,AS`, or `AS` according to the guest,
+never `AZUREEXTENSION` or SSIS. SSAS runs as `NT SERVICE\MSSQLServerOLAPService`;
+its local Administrator and local Administrators group have SSAS admin access.
+SSAS readiness checks the 2025 executable, Tabular mode, running service and
+TCP `2383`, not a model query. `-VerifyOnly` on the guest feature installer
+rejects missing or unexpected features without starting Setup. A healthy existing
+feature is retained; an absent assigned feature can be added, but conflicting
+instances and orphaned SQL/SSAS files require diagnosis. Stages `00` through
 `60` prepare the infrastructure and sample workloads; they do not install or
 connect Azure Arc or the Azure extension for SQL Server. After the agent stages
 the launchers, the user completes [interactive Arc setup](03-arc-onboarding.md)
@@ -286,6 +299,8 @@ Expected nested VMs:
 | `JS-SQL-01` | Domain-joined standalone SQL Server |
 | `JS-SQL-AG-01` | WSFC and AOAG replica |
 | `JS-SQL-AG-02` | WSFC and AOAG replica |
+| `JS-RETAIL-01` | Domain-joined SQL Database Engine + SSAS; `JumpstartRetailDB` |
+| `JS-INSIGHT-01` | Domain-joined SSAS only; no relational engine or BI models |
 | `JS-UBUNTU-01` | Standalone Linux workload |
 
 ### Connect to nested SQL from the host
@@ -299,9 +314,11 @@ than by guest name:
 | `JS-SQL-01` | `192.168.128.11` |
 | `JS-SQL-AG-01` | `192.168.128.12` |
 | `JS-SQL-AG-02` | `192.168.128.13` |
+| `JS-RETAIL-01` | `192.168.128.14` |
+| `JS-INSIGHT-01` (Analysis Services only) | `192.168.128.15` |
 | AG listener | `192.168.128.21` |
 
-Stage `50` enables TCP `1433` on all three SQL guests only from
+Stage `50` enables TCP `1433` on all four Database Engine guests only from
 `192.168.128.0/24` and verifies the port from the host. It grants
 `JUMPSTART\Domain Admins` SQL sysadmin. Because the host itself has no domain logon token, launch SSMS with network-only
 domain credentials from the host desktop. For the default installation:
@@ -319,6 +336,11 @@ Enter the value of `NESTED_WINDOWS_PASSWORD` when `runas` prompts. In SSMS,
 select **Windows Authentication**, enable **Trust server certificate** for
 these lab instances, and connect to one of the IP addresses above. Do not put
 the password on the command line.
+
+For SSAS, select **Analysis Services** as the SSMS server type and use
+`192.168.128.14` or `192.168.128.15`. Stage `50` enables TCP `2383` only from
+the nested subnet. Neither instance contains a model; `JS-INSIGHT-01` has
+no Database Engine endpoint.
 
 Files downloaded on the host are not automatically visible inside a nested
 guest. To restore an AdventureWorks backup, copy it through PowerShell Direct
@@ -405,4 +427,4 @@ Expect one row per node: `JumpstartDB`, `SYNCHRONIZED`, `HEALTHY`, and
 `is_suspended=0`. The standalone guest should have `JumpstartStandaloneDB`
 online, and `JS-AG-LSTN.jumpstart.lab` should resolve to `192.168.128.21`.
 
-The Windows servers use fixed nested addresses: the domain controller is `.10`, standalone SQL is `.11`, and the two AG nodes are `.12` and `.13` on `192.168.128.0/24`.
+The Windows servers use fixed nested addresses: the domain controller is `.10`, standalone SQL is `.11`, the two AG nodes are `.12` and `.13`, mixed SQL/SSAS is `.14`, and SSAS-only is `.15` on `192.168.128.0/24`.

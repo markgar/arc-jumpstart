@@ -12,7 +12,7 @@ param(
     [Parameter(Mandatory)]
     [securestring]$DomainAdministratorPassword,
 
-    [string[]]$VMNames = @('JS-DC-01', 'JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02')
+    [string[]]$VMNames = @('JS-DC-01', 'JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02', 'JS-RETAIL-01', 'JS-INSIGHT-01')
 )
 
 $ErrorActionPreference = 'Stop'

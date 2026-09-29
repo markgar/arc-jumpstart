@@ -19,7 +19,7 @@ try {
             if ($global:LabEmptyGraph) {
                 return '{"count":0,"totalRecords":0,"data":[]}'
             }
-            return '{"count":1,"totalRecords":1,"data":[{"RecordType":"ARC_MACHINE","ResourceName":"JS-SQL-01","Properties":"{\"status\":\"Online\"}"}]}'
+            return '{"count":1,"totalRecords":1,"data":[{"RecordType":"SQL_INSTANCE","ResourceName":"JS-SQL-01","Properties":"{\"status\":\"Online\"}","SqlServiceType":"Engine","AssessmentUploadTime":"2026-09-29T17:00:00Z","SqlMiRecommendation":"{\"recommendationStatus\":\"Ready\"}","FailoverCluster":"{\"sample\":\"quoted, metadata\"}","MigrationAssessment":"{\"enabled\":true}"}]}'
         }
         throw 'Unexpected Azure CLI operation in inventory export.'
     }
@@ -35,6 +35,30 @@ try {
         $record.Properties -ne '{"status":"Online"}') {
         throw 'Inventory CSV lost raw modeling fields.'
     }
+    if ($record.SqlServiceType -ne 'Engine' -or
+        $record.AssessmentUploadTime -notmatch '^2026-09-29T17:00:00(\.0+)?(Z|\+00:00)$' -or
+        $record.SqlMiRecommendation -ne '{"recommendationStatus":"Ready"}' -or
+        $record.FailoverCluster -ne '{"sample":"quoted, metadata"}' -or
+        $record.MigrationAssessment -ne '{"enabled":true}') {
+        throw "Inventory CSV lost component, assessment or HA fields: $($record | ConvertTo-Json -Compress)"
+    }
+    $projection = ($global:LabGraphQuery -split '\| project\s*\r?\n', 2)[1] -split '\| order by', 2
+    $expectedFields = @($projection[0] -split '\r?\n' |
+        Where-Object { $_.Trim() } |
+        ForEach-Object { ($_.Trim().TrimEnd(',') -split '\s*=\s*', 2)[0] })
+    $actualFields = @($record.PSObject.Properties.Name)
+    if (($expectedFields -join ',') -ne ($actualFields -join ',')) {
+        throw 'Inventory CSV schema differs from the customer ARG query projection.'
+    }
+    foreach ($expected in @('skuRecommendationResults', 'assessmentUploadTime', 'serverAssessments',
+        'properties.failoverCluster', 'properties.serviceType', 'OTHER_SQL_CHILD', 'ARC_EXTENSION')) {
+        if (-not $global:LabGraphQuery.Contains($expected)) {
+            throw "Inventory query is missing $expected."
+        }
+    }
+    if ($global:LabGraphQuery -match '(?i)microsoft\.compute/|jsarc|JS-SQL|JS-RETAIL|JS-INSIGHT|\|\s*(join|mv-expand|take|limit)\b') {
+        throw 'Customer query must remain host-independent and retain unjoined resource rows.'
+    }
     $global:LabEmptyGraph = $true
     $emptyOutput = Join-Path $directory 'empty'
     & (Join-Path $PSScriptRoot 'lab.ps1') -Command inventory -Value $emptyOutput
@@ -42,6 +66,10 @@ try {
     if ($emptyCsv.Count -ne 1 -or
         (Get-Content -LiteralPath $emptyCsv[0].FullName).Count -ne 1) {
         throw 'Empty inventory must retain a CSV header without inventing rows.'
+    }
+    $emptyHeader = @(Get-Content -LiteralPath $emptyCsv[0].FullName)[0]
+    if ($emptyHeader -ne @(Get-Content -LiteralPath $csv[0].FullName)[0]) {
+        throw 'Empty inventory header differs from populated inventory.'
     }
     Write-Host 'PowerShell lab-management regression checks passed.'
 }

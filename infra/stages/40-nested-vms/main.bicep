@@ -1,4 +1,4 @@
-metadata description = 'Stage 40 - nested guests: creates four Windows servers from one generalized Windows parent and one Linux guest. SQL Server is installed separately in stage 45.'
+metadata description = 'Stage 40 - nested guests: creates six Windows servers from one generalized Windows parent and one Linux guest. SQL/SSAS features are installed separately in stage 45.'
 
 targetScope = 'resourceGroup'
 

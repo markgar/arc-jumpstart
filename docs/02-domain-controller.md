@@ -1,7 +1,7 @@
 # Automated domain controller: stage 50
 
 Stage `50` creates the lab's private Active Directory Domain Services (AD DS)
-forest, prepares DNS, creates a SQL service account, and joins the three SQL
+forest, prepares DNS, creates a SQL service account, and joins the five SQL/SSAS
 guests. This is supporting infrastructure for the SQL availability-group lab,
 not Azure Arc onboarding.
 
@@ -18,6 +18,8 @@ execution result and guest checks below before proceeding.
 | NetBIOS domain | `JUMPSTART` | Qualifies Windows domain accounts |
 | Standalone SQL | `JS-SQL-01`, `192.168.128.11` | Domain member, default SQL instance |
 | AG SQL members | `JS-SQL-AG-01` / `JS-SQL-AG-02`, `.12` / `.13` | Domain members; AG configuration comes in stage `60` |
+| Mixed SQL/SSAS | `JS-RETAIL-01`, `.14` | Domain member, default Database Engine and SSAS instances |
+| SSAS-only | `JS-INSIGHT-01`, `.15` | Domain member, SSAS without a Database Engine |
 | Internal gateway | `192.168.128.1` | NAT on the Hyper-V host |
 | DHCP | Hyper-V host, scope `192.168.128.0` | Stage `50` changes scope DNS options to the DC |
 | External DNS forwarder | `1.1.1.1` | Resolves names outside the private AD namespace |
@@ -74,7 +76,7 @@ rebooting clones and checks unique Windows machine SIDs. Those are separate
 checks: AD DS and SQL can function while the setup wizard is still incomplete,
 but the Cluster Service can pause waiting for OOBE. Never substitute successful
 domain discovery for Windows Setup completion. Stage `45` must have
-finished installing and verifying SQL on all three SQL guests. The stage `50`
+finished installing and verifying assigned features on all five SQL/SSAS guests. The stage `50`
 wrapper requires both the stage `45` deployment and its script execution to have
 succeeded.
 
@@ -214,14 +216,14 @@ Invoke-Command -VMName JS-DC-01 -Credential $domainCredential -ScriptBlock {
 Expect the DC in `jumpstart.lab` with a DC domain role (`4` or `5`), running
 services, both secure AD-integrated zones, both shares, and an LDAP SRV answer
 for `JS-DC-01.jumpstart.lab` on port `389`. The DC's active interface must use
-`192.168.128.10` for DNS. Expect the enabled `svc-sql` account and all three SQL
+`192.168.128.10` for DNS. Expect the enabled `svc-sql` account and all five member
 computer objects.
 
 AD computer objects alone do not prove that the guests joined successfully.
 Check the guests themselves, their secure channels, and their SQL engines:
 
 ```powershell
-foreach ($vm in 'JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02') {
+foreach ($vm in 'JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02', 'JS-RETAIL-01') {
     $localCredential = Get-Credential "$vm\Administrator"
     Invoke-Command -VMName $vm -Credential $localCredential -ScriptBlock {
         Get-CimInstance Win32_ComputerSystem | Select-Object Name, Domain, PartOfDomain
@@ -239,6 +241,15 @@ a `True` secure-channel result, its own SQL server name, and
 Administrator; it is not a test of a fresh domain user's SQL connection.
 `-C` explicitly trusts the lab's self-signed SQL certificate for the localhost
 query; it does not disable encryption.
+
+For `JS-RETAIL-01` and `JS-INSIGHT-01`, stage `50` also verifies the domain
+secure channel and retained SSAS installation, and opens TCP `2383` only to
+the nested subnet. Setup grants SSAS administration to the local Administrator
+and local Administrators group (which includes Domain Admins after joining).
+The host verifies TCP connectivity to both fixed addresses. SSAS service,
+version, Tabular mode and TCP checks are not an authenticated model query.
+`JS-INSIGHT-01` deliberately skips SQL logins, sqlcmd and TCP `1433` checks;
+its feature verifier rejects any relational engine installation.
 
 ## Failures, evidence and safe retries
 

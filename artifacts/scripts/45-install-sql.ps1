@@ -3,10 +3,10 @@
 Installs SQL Server 2025 Enterprise Developer on the plain Windows SQL guests.
 .DESCRIPTION
 Run as SYSTEM on the Hyper-V host, after stage 40 and before stage 50.
-VmNames defaults to all three SQL guests. For a one-guest smoke test, pass
+VmNames defaults to all five SQL/SSAS guests. For a one-guest smoke test, pass
 -VmNames JS-SQL-01 through a separate managed command such as smoke-sql-install.
-The canonical stage45 invocation must omit the selector (or select all three)
-before downstream stages proceed. Up to three selected guests run concurrently.
+The canonical stage45 invocation must omit the selector (or select all five)
+before downstream stages proceed. Up to five selected guests run concurrently.
 Developer is licensed for development/test ONLY. Running this stage accepts the
 SQL Server, Microsoft ODBC, command-line utilities and VC++ license terms:
 https://aka.ms/useterms
@@ -48,7 +48,7 @@ never stopped to meet a deadline. An unusually hung installer can outlive the
 managed command's four-hour cap and requires operator diagnosis.
 All started host workers are drained, even after a sibling fails. Installer
 workers are never force-stopped; the host cache lock is held until they finish.
-Only the three SQL guests may be rebooted. A fresh, idle guest with a pending
+Only the five SQL/SSAS guests may be rebooted. A fresh, idle guest with a pending
 Windows servicing reboot gets one pre-setup reboot; SQL Setup exit 3010 gets
 at most one separate post-setup reboot. Persistent reboot flags stop the stage.
 Failed/partial installs require operator diagnosis or stage-40 guest rebuild;
@@ -73,9 +73,9 @@ param(
     [string]$EngineScriptBase64,
 
     [ValidateNotNullOrEmpty()]
-    [ValidateCount(1, 3)]
-    [ValidateSet('JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02')]
-    [string[]]$VmNames = @('JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02')
+    [ValidateCount(1, 5)]
+    [ValidateSet('JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02', 'JS-RETAIL-01', 'JS-INSIGHT-01')]
+    [string[]]$VmNames = @('JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02', 'JS-RETAIL-01', 'JS-INSIGHT-01')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -288,8 +288,8 @@ function Get-MicrosoftPackage {
 # Shared only with the guest runner/probes; defining it does not execute guest code.
 $guestLibrary = @'
 function Assert-SqlGuestIdentity {
-    if ($env:COMPUTERNAME -notin @('JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02')) {
-        throw 'SQL installation is permitted only inside the three SQL guests, never on the Hyper-V host.'
+    if ($env:COMPUTERNAME -notin @('JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02', 'JS-RETAIL-01', 'JS-INSIGHT-01')) {
+        throw 'SQL installation is permitted only inside the five SQL/SSAS guests, never on the Hyper-V host.'
     }
 }
 
@@ -328,6 +328,16 @@ function Set-SqlCmdMachinePath {
 
 function Test-SqlReady {
     Assert-SqlGuestIdentity
+    if ($env:COMPUTERNAME -in @('JS-RETAIL-01', 'JS-INSIGHT-01')) {
+        $verified = & 'C:\ArcJumpstart\Sql2025\45-install-sql-engine.ps1' -VerifyOnly -PassThru
+        if ($verified.Status -ne 'VerifiedExisting' -or -not $verified.AnalysisServices) {
+            throw 'SSAS feature verification did not complete.'
+        }
+        if ($env:COMPUTERNAME -eq 'JS-INSIGHT-01') {
+            if ($verified.Engine) { throw 'The SSAS-only guest must not have a relational engine.' }
+            return $true
+        }
+    }
     if ((Get-Service MSSQLSERVER).Status -ne 'Running') { throw 'MSSQLSERVER is not running.' }
     Test-SqlWmiReady
     $expected = Get-SqlCmdPath
@@ -378,7 +388,11 @@ try {
         $path = Join-Path $work $file.Name
         if ((Get-FileHash $path -Algorithm SHA256).Hash -ne $file.Hash) { throw "Transferred media hash mismatch: $path" }
     }
-    $engineReserve = if (Get-Service MSSQLSERVER -ErrorAction SilentlyContinue) { 120 } else { 2700 }
+    $needsAnalysisServices = $env:COMPUTERNAME -in @('JS-RETAIL-01', 'JS-INSIGHT-01')
+    $featuresPresent = ($env:COMPUTERNAME -eq 'JS-INSIGHT-01' -or
+        (Get-Service MSSQLSERVER -ErrorAction SilentlyContinue)) -and
+        (-not $needsAnalysisServices -or (Get-Service MSSQLServerOLAPService -ErrorAction SilentlyContinue))
+    $engineReserve = if ($featuresPresent) { 120 } else { 2700 }
     if (($script:guestDeadlineUtc - [DateTime]::UtcNow).TotalSeconds -lt $engineReserve) {
         throw 'Guest execution budget exhausted before the synchronous engine invocation.'
     }
@@ -391,12 +405,18 @@ try {
     if ($engine.Status -notin @('InstalledAndVerified', 'VerifiedExisting')) {
         throw "Unexpected engine result: $($engine.Status). Readiness cannot be claimed."
     }
-    $cmd = Get-SqlCmdPath
-    if (-not $cmd) {
-        throw 'SQL Setup did not supply bundled sqlcmd 17 in Client SDK\ODBC\180. Diagnose the installation; no alternate CLI will be installed.'
+    if ($env:COMPUTERNAME -ne 'JS-INSIGHT-01') {
+        $cmd = Get-SqlCmdPath
+        if (-not $cmd) {
+            throw 'SQL Setup did not supply bundled sqlcmd 17 in Client SDK\ODBC\180. Diagnose the installation; no alternate CLI will be installed.'
+        }
+        Set-SqlCmdMachinePath $cmd
     }
-    Set-SqlCmdMachinePath $cmd
-    $null = Wait-SqlReady
+    $readinessLimit = if ($needsAnalysisServices) { 600 } else { 120 }
+    $readinessSeconds = [int][Math]::Min($readinessLimit,
+        [Math]::Floor(($script:guestDeadlineUtc - [DateTime]::UtcNow).TotalSeconds))
+    if ($readinessSeconds -lt 1) { throw 'Guest execution budget exhausted before live readiness.' }
+    $null = Wait-SqlReady -TimeoutSeconds $readinessSeconds
     $result.Status = 'Verified'
     [pscustomobject]$result
 }
@@ -569,6 +589,13 @@ function Complete-SqlGuest {
         if (Get-ChildItem "$env:ProgramFiles\Microsoft SQL Server\MSSQL*" -Directory -ErrorAction SilentlyContinue) {
             throw 'Orphaned SQL instance files exist. Diagnose the partial installation before retrying.'
         }
+        if ((Get-Service -Name 'MSSQLServerOLAPService', 'MSOLAP$*' -ErrorAction SilentlyContinue) -or
+            (Test-Path 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\OLAP')) {
+            return $false
+        }
+        if (Get-ChildItem "$env:ProgramFiles\Microsoft SQL Server\MSAS*" -Directory -ErrorAction SilentlyContinue) {
+            throw 'Orphaned SSAS instance files exist. Diagnose the partial installation before retrying.'
+        }
         foreach ($key in @(
             'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending',
             'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')) {
@@ -576,6 +603,10 @@ function Complete-SqlGuest {
         }
         return $false
     }
+    $null = Invoke-SqlGuest $VMName -ScriptBlock $preSetup
+    if (-not $script:payload) { throw 'The coordinator must prepare shared media before starting any guest worker.' }
+    Copy-SqlPayload $VMName $script:payload
+    # Servicing can change while the large media payload is copied.
     $pendingReboot = Invoke-SqlGuest $VMName -ScriptBlock $preSetup
     if ($pendingReboot) {
         $boot = Wait-SqlGuest $VMName
@@ -589,8 +620,6 @@ function Complete-SqlGuest {
             throw "$VMName still requires a Windows servicing reboot after the planned pre-setup reboot. Diagnose before retrying."
         }
     }
-    if (-not $script:payload) { throw 'The coordinator must prepare shared media before starting any guest worker.' }
-    Copy-SqlPayload $VMName $script:payload
     for ($reboots = 0; $reboots -le 1; $reboots++) {
         $remaining = Get-BudgetSeconds 4080 "held SQL session on $VMName"
         $deadlineUtc = [DateTime]::UtcNow.AddSeconds($remaining).ToString('o')
@@ -599,12 +628,18 @@ function Complete-SqlGuest {
         try {
             $session = New-PSSession -VMName $VMName -Credential $guestCredential -ErrorAction Stop
             $attemptId = "$RunId-$([guid]::NewGuid().ToString('N'))"
-            Write-StageLog "$VMName starting synchronous engine verification/install and bundled CLI readiness ($attemptId)."
+            Write-StageLog "$VMName starting synchronous SQL/SSAS feature installation and readiness ($attemptId)."
             $result = Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create($guestInstall)) `
                 -ArgumentList $attemptId, $deadlineUtc -ErrorAction Stop
             $null = Get-BudgetSeconds 1 "completed synchronous installation on $VMName"
             if ($result.Status -eq 'Verified') {
-                Write-StageLog "$VMName verified: SQL 2025 Enterprise Developer, integrated sysadmin SELECT 1, bundled sqlcmd 17, native SQL WMI."
+                if ($VMName -eq 'JS-INSIGHT-01') {
+                    Write-StageLog "$VMName verified: SSAS 2025 Tabular service and TCP 2383; no relational engine."
+                }
+                else {
+                    Write-StageLog "$VMName verified: SQL 2025 Enterprise Developer, integrated sysadmin SELECT 1, bundled sqlcmd 17, native SQL WMI."
+                    if ($VMName -eq 'JS-RETAIL-01') { Write-StageLog "$VMName also verified: SSAS 2025 Tabular service and TCP 2383." }
+                }
                 return
             }
             if ($result.Status -ne 'RebootRequired') { throw "Unexpected guest status: $($result.Status)." }
@@ -661,8 +696,8 @@ finally {
 function Invoke-ParallelSqlGuests {
     param(
         [ValidateNotNullOrEmpty()]
-        [ValidateCount(1, 3)]
-        [ValidateSet('JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02')]
+        [ValidateCount(1, 5)]
+        [ValidateSet('JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02', 'JS-RETAIL-01', 'JS-INSIGHT-01')]
         [string[]]$Names
     )
     if (@($Names | Sort-Object -Unique).Count -ne $Names.Count) { throw 'Duplicate SQL guest selection is forbidden.' }

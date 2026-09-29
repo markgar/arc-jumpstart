@@ -705,14 +705,28 @@ try {
             Name = 'JS-SQL-AG-01'
             Parent = $generalizedWindowsImage
             Memory = $SqlMemoryGB
-            Processors = 8
+            Processors = 6
             Linux = $false
         },
         @{
             Name = 'JS-SQL-AG-02'
             Parent = $generalizedWindowsImage
             Memory = $SqlMemoryGB
-            Processors = 8
+            Processors = 6
+            Linux = $false
+        },
+        @{
+            Name = 'JS-RETAIL-01'
+            Parent = $generalizedWindowsImage
+            Memory = $SqlMemoryGB
+            Processors = 4
+            Linux = $false
+        },
+        @{
+            Name = 'JS-INSIGHT-01'
+            Parent = $generalizedWindowsImage
+            Memory = 4
+            Processors = 4
             Linux = $false
         },
         @{
@@ -760,7 +774,7 @@ try {
         }
     }
 
-    $machineSids = foreach ($name in @('JS-DC-01', 'JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02')) {
+    $machineSids = foreach ($name in @($definitions | Where-Object { -not $_.Linux } | ForEach-Object Name)) {
         Wait-VMHeartbeat -VMName $name
         $machineSid = Invoke-WindowsGuest -VMName $name -ScriptBlock {
             ((Get-LocalUser -Name Administrator).SID.Value -replace '-500$', '')

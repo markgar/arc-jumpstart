@@ -225,4 +225,46 @@ $script:validUsers = @('JUMPSTART\Administrator')
 $script:domainRole = 5
 $script:actualDomain = 'different.lab'
 Assert-Throws $resolve 'different domain'
-Write-Output 'Stage 50 DC services, DNS bootstrap, credential selection, and rerun checks passed.'
+& {
+    $members = $ast.Find({
+        param($n)
+        $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$memberNames'
+    }, $true)
+    $expected = 'JS-SQL-01,JS-SQL-AG-01,JS-SQL-AG-02,JS-RETAIL-01,JS-INSIGHT-01'
+    if (((& ([scriptblock]::Create($members.Right.Extent.Text))) -join ',') -ne $expected) {
+        throw 'Domain setup must include all five SQL/SSAS members.'
+    }
+    $loop = $ast.Find({
+        param($n)
+        $n -is [Management.Automation.Language.ForEachStatementAst] -and $n.Variable.Extent.Text -eq '$memberName'
+    }, $true)
+    $statements = @($loop.Body.Statements)
+    $start = 0
+    while ($start -lt $statements.Count -and $statements[$start].Extent.Text -notlike "if (`$memberName -in*") { $start++ }
+    if ($start -eq $statements.Count) { throw 'Missing BI member readiness branch.' }
+    $tail = ($statements[$start..($statements.Count - 1)].Extent.Text) -join "`n"
+    $code = [scriptblock]::Create('foreach ($memberName in $selectedMembers) {' + "`n$tail`n}")
+    $DomainName = 'jumpstart.lab'; $DomainNetbiosName = 'JUMPSTART'; $DhcpScopeId = '192.168.128.0'
+    $memberAddresses = @{ 'JS-RETAIL-01' = '192.168.128.14'; 'JS-INSIGHT-01' = '192.168.128.15' }
+    $script:memberCalls = @()
+    function Invoke-GuestWithRetry {
+        param($VMName, $Credential, $ArgumentList, $ScriptBlock)
+        $kind = if ($ScriptBlock.ToString().Contains('-VerifyOnly')) { 'AS' } else { 'SQL' }
+        $script:memberCalls += "${VMName}:$kind"
+        if ($kind -eq 'AS' -and (-not $ScriptBlock.ToString().Contains('Test-ComputerSecureChannel') -or
+            -not $ScriptBlock.ToString().Contains('Wait-SqlReady -TimeoutSeconds 600') -or
+            -not $ScriptBlock.ToString().Contains('-RemoteAddress $NestedSubnetCidr'))) {
+            throw 'BI guests need secure-channel verification and a subnet-limited SSAS rule.'
+        }
+    }
+    function Wait-LabTcpPort {
+        param($Address, $Port)
+        $script:memberCalls += "${Address}:$Port"
+    }
+    $selectedMembers = @('JS-RETAIL-01', 'JS-INSIGHT-01')
+    & $code
+    if (($script:memberCalls -join ',') -ne 'JS-RETAIL-01:AS,192.168.128.14:2383,JS-RETAIL-01:SQL,192.168.128.14:1433,JS-INSIGHT-01:AS,192.168.128.15:2383') {
+        throw 'BI-only guest must skip relational setup; mixed guest must verify both services.'
+    }
+}
+Write-Output 'Stage 50 DC services, DNS bootstrap, BI feature routing, credential selection, and rerun checks passed.'

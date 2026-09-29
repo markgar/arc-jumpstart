@@ -96,7 +96,7 @@ $launcher = [System.IO.File]::ReadAllText((Join-Path $root 'artifacts/scripts/pr
 $stager = [System.IO.File]::ReadAllText((Join-Path $root 'artifacts/scripts/stage-arc-device-code-launchers.ps1'))
 $bicep = [System.IO.File]::ReadAllText((Join-Path $root 'infra/stages/arc-launchers/main.bicep'))
 foreach ($expected in @("'JS-DC-01'", "'JS-SQL-01'", "'JS-SQL-AG-01'",
-    "'JS-SQL-AG-02'", "Join-Path `$env:PUBLIC 'Desktop'",
+    "'JS-SQL-AG-02'", "'JS-RETAIL-01'", "'JS-INSIGHT-01'", "Join-Path `$env:PUBLIC 'Desktop'",
     "Join-Path `$programRoot 'Connect to Azure Arc.ps1'",
     "'Connect to Azure Arc.cmd'",
     "Remove-Item -LiteralPath (Join-Path `$publicDesktop 'Connect to Azure Arc.ps1')",

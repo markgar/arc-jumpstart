@@ -1,4 +1,4 @@
-metadata description = 'Stage 45 - install SQL Server Developer on the three clean Windows guests before domain setup.'
+metadata description = 'Stage 45 - install assigned SQL Server Developer engine and SSAS features on five clean Windows guests before domain setup.'
 
 targetScope = 'resourceGroup'
 

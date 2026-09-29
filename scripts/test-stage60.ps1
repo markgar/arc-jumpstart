@@ -4,6 +4,27 @@ $errors = $null
 $path = Join-Path $PSScriptRoot '../artifacts/scripts/60-configure-sql-ag.ps1'
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors.Message -join "`n") }
+& {
+    $sampleLoop = $ast.Find({
+        param($n)
+        $n -is [Management.Automation.Language.ForEachStatementAst] -and $n.Variable.Extent.Text -eq '$sample'
+    }, $true)
+    if (-not $sampleLoop) { throw 'Missing standalone and mixed-guest sample database loop.' }
+    $standaloneName = 'JS-SQL-01'; $StandaloneDatabaseName = 'JumpstartStandaloneDB'
+    $script:sampleTargets = @()
+    function Invoke-GuestWithRetry {
+        param($VMName, $Credential, $ArgumentList, $ScriptBlock)
+        if (-not $ScriptBlock.ToString().Contains('IF DB_ID') -or
+            -not $ScriptBlock.ToString().Contains('IF NOT EXISTS (SELECT 1 FROM dbo.MigrationWorkload)')) {
+            throw 'Sample databases and seed data must be retained on reruns.'
+        }
+        $script:sampleTargets += "${VMName}:$ArgumentList"
+    }
+    & ([scriptblock]::Create($sampleLoop.Extent.Text))
+    if (($script:sampleTargets -join ',') -ne 'JS-SQL-01:JumpstartStandaloneDB,JS-RETAIL-01:JumpstartRetailDB') {
+        throw 'Relational sample databases must not target the SSAS-only guest or replace the migration sample.'
+    }
+}
 $definition = $ast.Find({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and

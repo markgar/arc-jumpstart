@@ -3,6 +3,7 @@ param([switch]$NetworkFailure, [switch]$ImageFailure,
     [switch]$DisableBastion, [switch]$DisableLaunchers,
     [switch]$ShutdownOnly, [switch]$MissingShutdown,
     [switch]$SsmsOnly, [switch]$DisableSsms, [switch]$SsmsFailure,
+    [switch]$MigrationRegistrationFailure,
     [ValidateSet('', 'infra', 'arc', 'error', 'invalid')][string]$ExistingTarget = '')
 
 $ErrorActionPreference = 'Stop'
@@ -252,6 +253,18 @@ try {
                 return "Succeeded|0|$generation"
             }
             'provider show --namespace' { return 'Registered' }
+            'provider register --namespace' {
+                if ($ExistingTarget) { throw 'Collision gate allowed provider registration.' }
+                if ($call -notcontains 'Microsoft.DataMigration' -or $call -notcontains '--wait' -or
+                    $call -notcontains '--subscription' -or $call -notcontains 'mock-sub') {
+                    throw 'Migration registration must wait and target the configured subscription.'
+                }
+                if ($MigrationRegistrationFailure) {
+                    $global:LASTEXITCODE = 1
+                    return 'Mock provider registration denied.'
+                }
+                return ''
+            }
             'feature show --namespace' { return 'Registered' }
             'vm list-skus --location' {
                 $query = $call[([array]::IndexOf($call, '--query') + 1)]
@@ -270,9 +283,16 @@ try {
         if (@($global:LabTestDeployed).Count -ne 1 -or $global:LabTestDeployed[0] -ne $expectedOnly) {
             throw 'Independent action replayed numbered infrastructure stages.'
         }
+        if (@($global:LabTestCalls | Where-Object { ($_ -join ' ') -match 'provider register' }).Count) {
+            throw 'Independent action unexpectedly registered a provider.'
+        }
         return
     }
     & (Join-Path $PSScriptRoot 'deploy.ps1') -Stage all
+    $registrationCalls = @($global:LabTestCalls | Where-Object { ($_ -join ' ') -match 'provider register' })
+    if ($registrationCalls.Count -ne 1) {
+        throw 'Full deployment must register DataMigration once.'
+    }
     if ($NetworkFailure -or $ImageFailure) { throw 'Failed stage unexpectedly returned success.' }
     $names = @($global:LabTestDeployed)
     $expected = @('arc-jumpstart-00-foundation', 'arc-jumpstart-bastion',
@@ -307,6 +327,10 @@ try {
         throw 'A password appeared on the Azure CLI command line.'
     }
     if ($BastionFailure -or $DisableBastion -or $DisableLaunchers -or $DisableSsms -or $SsmsFailure) { return }
+    $failed = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath -MigrationRegistrationFailure 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $failed -notmatch 'Azure CLI command failed' -or $failed -match '==> Stage 00:') {
+        throw 'Provider registration failure did not stop deployment before foundation.'
+    }
     foreach ($target in @('infra', 'arc', 'error', 'invalid')) {
         $failed = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath -ExistingTarget $target 2>&1 | Out-String
         $expectedError = if ($target -in @('infra', 'arc')) { "Resource groups already exist: mock-$target" }
@@ -358,7 +382,20 @@ try {
         return @{ Headers = @{ 'Content-Length' = @('1024') } }
     }
     $previousCount = $global:LabTestDeployed.Count
+    $global:LabTestCalls.Clear()
     & (Join-Path $PSScriptRoot 'preflight.ps1') -Profile infra
+    if (@($global:LabTestCalls | Where-Object { $_ -contains 'Microsoft.DataMigration' }).Count) {
+        throw 'Infrastructure preflight must allow deployment to register DataMigration.'
+    }
+    $global:LabTestCalls.Clear()
+    & (Join-Path $PSScriptRoot 'preflight.ps1') -Profile full
+    if (-not @($global:LabTestCalls | Where-Object {
+        ($_ -join ' ') -match 'provider show --namespace Microsoft.DataMigration'
+    }).Count -or @($global:LabTestCalls | Where-Object {
+        ($_ -join ' ') -match 'provider register'
+    }).Count) {
+        throw 'Full preflight must check DataMigration without registering it.'
+    }
     if ($global:LabTestDeployed.Count -ne $previousCount) {
         throw 'Infrastructure preflight created an Azure deployment.'
     }

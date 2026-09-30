@@ -29,7 +29,7 @@ try {
         $providers += @(
             'Microsoft.HybridCompute', 'Microsoft.GuestConfiguration',
             'Microsoft.HybridConnectivity', 'Microsoft.AzureArcData',
-            'Microsoft.OffAzure', 'Microsoft.Migrate', 'Microsoft.Sql',
+            'Microsoft.OffAzure', 'Microsoft.Migrate', 'Microsoft.Sql', 'Microsoft.DataMigration',
             'Microsoft.KeyVault', 'Microsoft.Insights')
         $graph = Invoke-LabAz @('extension', 'show', '--name', 'resource-graph', '--output', 'none') -AllowFailure
         if (-not $graph.Success) {

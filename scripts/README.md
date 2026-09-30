@@ -16,7 +16,7 @@ inputs and required ready-environment outcome.
 | `./scripts/init-config.ps1 -ResourceGroupRoot <root>` | Creates the owner-only external `ArcJumpstart/<root>.env` template with `<root>-infra` and `<root>-arc` targets, without overwriting an existing file. |
 | `./scripts/validate.ps1` | Compiles Bicep and runs PowerShell source and stage regressions. No Azure resources are created. |
 | `./scripts/preflight.ps1 infra` / `full` | Checks Azure registrations, host SKU and media reachability. Does not create resources or register providers. |
-| `./scripts/deploy.ps1 all` / `20-30` / `<stage>` | Deploys all stages or a scoped recovery stage with predecessor and Run Command gates. |
+| `./scripts/deploy.ps1 all` / `20-30` / `<stage>` | Deploys all stages or a scoped recovery stage with predecessor and Run Command gates. `all` and `00` also ensure `Microsoft.DataMigration` is registered for later use; no DMS service is created. |
 | `./scripts/deploy.ps1 bastion` / `auto-shutdown` / `arc-launchers` / `ssms` | Independent access, shutdown, interactive Arc-launcher setup and host-only SSMS 22 installation. |
 | `./scripts/lab.ps1 build-status` / `stage-progress 40` / `stage-log 40` | One-shot redacted stage views; live views never start a competing VM command. |
 | `./scripts/lab.ps1 status` / `start` / `stop` / `inventory` / `delete-infra <RG>` | Host power, modeling export and explicitly confirmed infrastructure cleanup. |

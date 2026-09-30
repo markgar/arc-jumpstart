@@ -29,7 +29,7 @@ $providers = @(
     'Microsoft.Authorization', 'Microsoft.ManagedIdentity', 'Microsoft.DevTestLab',
     'Microsoft.HybridCompute', 'Microsoft.GuestConfiguration',
     'Microsoft.HybridConnectivity', 'Microsoft.AzureArcData',
-    'Microsoft.OffAzure', 'Microsoft.Migrate', 'Microsoft.Sql',
+    'Microsoft.OffAzure', 'Microsoft.Migrate', 'Microsoft.Sql', 'Microsoft.DataMigration',
     'Microsoft.KeyVault', 'Microsoft.Insights'
 )
 foreach ($provider in $providers) {
@@ -37,6 +37,12 @@ foreach ($provider in $providers) {
     if ($LASTEXITCODE -ne 0) { throw "Provider registration failed: $provider" }
 }
 ```
+
+`deploy.ps1 all` and `deploy.ps1 00` automatically register
+`Microsoft.DataMigration` in the configured subscription with `--wait`.
+This prepares for optional Azure Database Migration Service exercises without
+creating a migration service or starting a migration. `preflight.ps1 full`
+includes this provider in its existing registration checks.
 
 ## Capacity and quota
 

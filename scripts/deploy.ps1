@@ -331,6 +331,11 @@ try {
         throw 'This lab requires Azure CLI authentication as an interactive user.'
     }
     if ($Stage -eq 'all') { Assert-NewLabResourceGroups $settings }
+    if ($Stage -in @('all', '00')) {
+        Write-Host 'Ensuring Microsoft.DataMigration is registered for later migration exercises...'
+        [void](Invoke-LabAz @('provider', 'register', '--namespace', 'Microsoft.DataMigration',
+            '--subscription', $settings.AZURE_SUBSCRIPTION_ID, '--wait', '--output', 'none'))
+    }
     [void](Invoke-LabAz @('group', 'create', '--name', $settings.AZURE_RESOURCE_GROUP,
         '--location', $settings.AZURE_LOCATION, '--output', 'none'))
     if ($Stage -eq 'bastion') {

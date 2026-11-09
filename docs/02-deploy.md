@@ -64,7 +64,13 @@ that Windows Setup finished. If the check stops, inspect the guest console and
 force setup-state registry values. Completing the parent image's Sysprep
 generalization and completing each clone's first boot are separate requirements.
 
-The answer file supplies the matching Windows Server 2022 KMS client
+The default Server 2025 Evaluation answer file omits product keys and verifies
+activated `TIMEBASED_EVAL` licensing with remaining evaluation time. It never
+converts or rearms Evaluation. The host uses the standard Server 2025
+Datacenter Gen2 (`2025-datacenter-g2`) Marketplace image, not a custom image or
+Hotpatch SKU, preserving manual patching and controlled host restarts.
+
+For legacy Server 2022 Jumpstart images only, the answer file supplies the matching KMS client
 `ProductKey` in the `Microsoft-Windows-Shell-Setup` **specialize** pass.
 Without this input, the source image was observed waiting indefinitely at
 "It's time to enter the product key"; hiding other OOBE pages did not answer
@@ -75,7 +81,12 @@ and Microsoft's [ProductKey setting](https://learn.microsoft.com/en-us/windows-h
 
 Each PowerShell stage runs through Azure VM Run Command. Azure retains recent command output, and the host retains full transcripts under `C:\ArcJumpstart\Logs`. Stages `30` and `45` use asynchronous Run Command for image downloads and SQL installations; the deployment wrapper polls the command until it reaches a terminal state and verifies exit code `0` before returning.
 
-Stage `30` downloads approximately 38 GiB of Windows and Ubuntu images. Source throttling and regional network conditions affect download time. Azure does not send the operator a separate completion notification. Keep the `./scripts/deploy.ps1 30` terminal open and wait for it to return successfully before starting stage `40`.
+Stage `30` downloads Windows and optional Ubuntu ISOs in installation-media mode,
+or approximately 38 GiB of prebuilt images in legacy Jumpstart mode. Source
+throttling and regional network conditions affect download time. Azure does not
+send the operator a separate completion notification. Keep the
+`./scripts/deploy.ps1 30` terminal open and wait for it to return successfully
+before starting stage `40`.
 
 `all` and `20-30` start those image downloads before configuring the independent
 internal network, then join image completion before creating guests. Individual
@@ -96,7 +107,8 @@ depends on Bastion. Even a rejected Bastion submission is reported separately
 and does not stop the core build. Set `DEPLOY_BASTION=false` to omit that request.
 
 Stage `40` prepares and verifies a generalized Windows parent before cloning all
-six Windows guests. It validates Sysprep evidence offline, rejects stale parent
+selected Windows guests (seven by default, including the unused appliance VM).
+It validates Sysprep evidence offline, rejects stale parent
 markers or conflicting child disks, and checks OOBE, activation, and unique
 machine SIDs before continuing. Do not manually alter the parent, readiness
 markers, or guest setup state. See the
@@ -104,19 +116,41 @@ markers, or guest setup state. See the
 for implementation history and recovery boundaries.
 The new-build allocation is 6 virtual processors for the standalone SQL guest,
 6 for each AG guest, 4 each for `JS-RETAIL-01` and `JS-INSIGHT-01`, and 2 each
-for the DC and Ubuntu guests. This intentionally
-overcommits the default 16-vCPU outer host (30 assigned guest processors);
+for the DC and Ubuntu guests. The unused `JS-MIGRATE-01` adds 8 vCPUs /
+16 GiB RAM and stays in a workgroup without SQL, Arc or appliance software.
+This intentionally overcommits the default 16-vCPU outer host
+(38 assigned guest processors);
 parallel SQL operations may contend for CPU. On a stage `40` retry, a guest
 whose existing processor count differs is preserved and reported rather than
 resized; use deliberate recovery or build a fresh lab, not `deploy.ps1 all`
 against an existing domain.
 
-The seven-server topology is a new-build default, not an in-place expansion
+The eight-guest topology is a new-build default, not an in-place expansion
 procedure for an older five-server lab. Do not run stage `40` against a promoted
 domain to add the BI guests. Use a separately approved fresh target, or reuse
 the same private configuration only after both previous target groups are gone.
 
-Stage `45` downloads SQL Server 2025 Enterprise Developer media once to the host's persistent disk and installs the default Database Engine on the three original SQL guests and `JS-RETAIL-01`. It also installs default SSAS Tabular instances on `JS-RETAIL-01` and `JS-INSIGHT-01`, with no models. `JS-INSIGHT-01` must have no relational engine. Engine guests use the ODBC driver and `sqlcmd` tooling supplied by SQL Setup rather than a separate installer. Installation uses Windows authentication and grants the guest's local Administrator SQL sysadmin access; no SQL authentication password is configured. Stage `50` later grants the lab domain administrators SQL access, and stage `60` configures the domain service account and availability group through SQL Server's native WMI provider.
+Stage `45` downloads SQL Server 2025 Enterprise Developer media once to the host's persistent disk and installs the default Database Engine on the three original SQL guests and `JS-RETAIL-01`. It also installs default SSAS Tabular instances on `JS-RETAIL-01` and `JS-INSIGHT-01`, with no models. `JS-INSIGHT-01` must have no relational engine. Engine guests use the ODBC driver and `sqlcmd` tooling supplied by SQL Setup rather than a separate installer. Database Engines install in mixed mode with `sa` enabled, using the same private `SQL_SA_PASSWORD` on all four engines, and retain the guest's local Administrator as SQL sysadmin. Stage `50` later grants the lab domain administrators SQL access, and stage `60` configures the domain service account and availability group through SQL Server's native WMI provider.
+
+`init-config.ps1` generates the shared 52-character password once per new lab
+and saves it only in the owner-only `ENV_FILE`. Deployment passes it as a
+secure Bicep parameter, protected Run Command parameter and credential object
+to the four engine workers, never the SSAS-only guest. SQL Setup receives
+`/SECURITYMODE=SQL` and `/SAPWD`; passwords are not embedded in copied scripts,
+payload manifests, result records or stage messages. Treat native SQL Setup
+diagnostics as private. Readiness requires mixed mode, an enabled `sa`, and an
+actual encrypted TCP login using the configured password, alongside the
+Windows-admin checks. The licensed Standard/Enterprise path uses the same
+authentication contract.
+
+Existing configuration files are never rewritten to add or rotate this key.
+Before installing engines from an older configuration, securely add one
+`SQL_SA_PASSWORD` satisfying the rules in `deploy.env.example`; do not print it
+or reuse the Windows/service-account passwords. Verifying an existing instance
+with a different password, Windows-only authentication or disabled `sa` fails
+explicitly. Stage `45` does not reset logins, change authentication modes or
+restart existing SQL services to repair that mismatch. Those changes require a
+separately approved, scoped recovery; never replay `all` or reinstall SQL.
 
 After preparing the shared media cache, stage `45` processes the five SQL/SSAS guests
 in parallel, with at most one worker per guest. Each worker holds its own
@@ -206,9 +240,12 @@ to a host-local copy of the repository's engine script:
 
 ```powershell
 $credential = Get-Credential 'JS-SQL-01\Administrator'
+$sqlCredential = Get-Credential 'sa' # Use the saved SQL_SA_PASSWORD.
 $session = New-PSSession -VMName JS-SQL-01 -Credential $credential
 try {
-    Invoke-Command -Session $session -FilePath $scriptPath -ErrorAction Stop
+    Invoke-Command -Session $session -FilePath $scriptPath `
+        -ArgumentList 'C:\ArcJumpstart\Sql2025\SQLServer2025-x64-ENU-EntDev.iso', $sqlCredential.Password `
+        -ErrorAction Stop
 }
 finally {
     Remove-PSSession $session
@@ -222,8 +259,9 @@ under `C:\Program Files\Microsoft SQL Server\170\Setup Bootstrap\Log`.
 `RebootRequired` is not a readiness result: reboot only that guest after Setup
 finishes, reconnect, and rerun the script to verify the existing installation.
 The verification checks Enterprise Developer edition, major version 17,
-Windows-only authentication, local Administrator sysadmin access, server name,
-and a real SQL query using the built-in .NET client.
+mixed-mode authentication, enabled `sa`, local Administrator sysadmin access,
+server name, and a real encrypted TCP `sa` sysadmin query using the shared
+password and the built-in .NET client.
 
 This diagnostic deliberately disables Setup-time update discovery to isolate
 the pinned media installation; it does not establish that the server is patched.
@@ -319,9 +357,23 @@ than by guest name:
 | AG listener | `192.168.128.21` |
 
 Stage `50` enables TCP `1433` on all four Database Engine guests only from
-`192.168.128.0/24` and verifies the port from the host. It grants
-`JUMPSTART\Domain Admins` SQL sysadmin. Because the host itself has no domain logon token, launch SSMS with network-only
-domain credentials from the host desktop. For the default installation:
+`192.168.128.0/24` and verifies the port from the host. For Database Engine
+connections, choose **SQL Server Authentication** in SSMS, use login **`sa`**
+and the shared **`SQL_SA_PASSWORD`** from the private `ENV_FILE`, and append
+`,1433` to the guest IP. Select **Mandatory** encryption and **Trust server
+certificate** for the lab's self-signed certificate. The AG listener uses the
+same credentials on both replicas. No separate database user or `db_owner`
+grant is needed: `sa` is a server-wide sysadmin.
+
+Keep the host's normal Bastion/local Windows login; it does not determine the
+SQL-authenticated identity. This does not enable Microsoft Entra authentication,
+which requires separate post-Arc configuration. Do not select Entra
+authentication merely because the Arc SQL extension is present.
+
+Windows authentication is also retained: stage `50` grants
+`JUMPSTART\Domain Admins` SQL sysadmin. Because the host itself has no domain
+logon token, Windows-authenticated SSMS needs network-only domain credentials.
+For the default installation:
 
 ```powershell
 $ssms = 'F:\ArcJumpstart\SSMS22\Common7\IDE\Ssms.exe'
@@ -336,6 +388,9 @@ Enter the value of `NESTED_WINDOWS_PASSWORD` when `runas` prompts. In SSMS,
 select **Windows Authentication**, enable **Trust server certificate** for
 these lab instances, and connect to one of the IP addresses above. Do not put
 the password on the command line.
+If Windows authentication stalls before login, investigate lab DNS/name
+resolution separately; changing the Bastion username is not the fix. SQL
+authentication does not require the `/netonly` launcher.
 
 For SSAS, select **Analysis Services** as the SSMS server type and use
 `192.168.128.14` or `192.168.128.15`. Stage `50` enables TCP `2383` only from

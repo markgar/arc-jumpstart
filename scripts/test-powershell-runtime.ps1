@@ -4,7 +4,12 @@ param([switch]$NetworkFailure, [switch]$ImageFailure,
     [switch]$ShutdownOnly, [switch]$MissingShutdown,
     [switch]$SsmsOnly, [switch]$DisableSsms, [switch]$SsmsFailure,
     [switch]$MigrationRegistrationFailure,
-    [ValidateSet('', 'infra', 'arc', 'error', 'invalid')][string]$ExistingTarget = '')
+    [switch]$InstallationMedia,
+    [ValidateSet('2022', '2025')][string]$WindowsVersion = '2025',
+    [switch]$LicensedMedia, [switch]$ContinueMedia, [switch]$AlreadyContinued,
+    [switch]$ReuseMedia, [switch]$MediaCheckFailure,
+    [switch]$OsOnly, [switch]$PreparedOs,
+    [ValidateSet('', 'infra', 'arc', 'media', 'error', 'invalid')][string]$ExistingTarget = '')
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lab-runtime.ps1')
@@ -30,9 +35,10 @@ try {
         'NAME_PREFIX=mock'
         'HOST_ADMIN_USERNAME=mockadmin'
         'HOST_ADMIN_PASSWORD=FakeOnly-123!'
-        'NESTED_WINDOWS_PASSWORD=FakeOnly-123!'
+        'NESTED_WINDOWS_PASSWORD=JS123!!'
         'SAFE_MODE_PASSWORD=FakeOnly-123!'
         'SQL_SERVICE_ACCOUNT_PASSWORD=FakeOnly-123!'
+        'SQL_SA_PASSWORD=TestsOnly!Aa123456789012345678901234'
         'AUTO_SHUTDOWN_ENABLED=false'
         'AUTO_SHUTDOWN_TIME=2200'
         'AUTO_SHUTDOWN_TIME_ZONE=Central Standard Time'
@@ -49,8 +55,38 @@ try {
     if ($MissingShutdown) {
         $config = @($config | Where-Object { $_ -notmatch '^AUTO_SHUTDOWN_ENABLED=' })
     }
+    if ($InstallationMedia) {
+        $config += @('IMAGE_MODE=installation-media', 'HOST_VM_SIZE=Standard_E16s_v7',
+            "WINDOWS_SERVER_VERSION=$WindowsVersion", 'INCLUDE_APPLIANCE_VM=true',
+            'WINDOWS_ISO_URL=https://example.invalid/windows.iso',
+            "WINDOWS_ISO_SHA256=$('a' * 64)",
+            'UBUNTU_ISO_URL=https://example.invalid/ubuntu.iso',
+            "UBUNTU_ISO_SHA256=$('b' * 64)",
+            'LINUX_SSH_PUBLIC_KEY=ssh-ed25519 YWJj test-key')
+    }
+    if ($LicensedMedia -or $ContinueMedia -or $OsOnly) { $config += 'SQL_EDITION_MODE=licensed' }
+    if ($ReuseMedia) {
+        $config += @('SQL_EDITION_MODE=licensed', 'SQL_MEDIA_RESOURCE_GROUP=mock-media',
+            'SQL_MEDIA_ACCOUNT_NAME=sqlmediamock')
+    }
     [System.IO.File]::WriteAllLines($env:ENV_FILE, $config)
     $settings = Read-LabSettings $env:ENV_FILE
+    Assert-LabSqlSaPassword $settings
+    foreach ($invalid in @('', 'CHANGEME', 'Short1!', ('a' * 52), ('A' * 52),
+        ($settings.SQL_SA_PASSWORD + '"'), ($settings.SQL_SA_PASSWORD + ';'), ('Aa1!' + ('x' * 125)))) {
+        $bad = $settings.Clone()
+        $bad.SQL_SA_PASSWORD = $invalid
+        $rejected = $false
+        try { Assert-LabSqlSaPassword $bad } catch { $rejected = $true }
+        if (-not $rejected) { throw 'An invalid shared sa password was accepted.' }
+    }
+    foreach ($key in @('HOST_ADMIN_PASSWORD','NESTED_WINDOWS_PASSWORD','SAFE_MODE_PASSWORD','SQL_SERVICE_ACCOUNT_PASSWORD')) {
+        $bad = $settings.Clone()
+        $bad[$key] = $bad.SQL_SA_PASSWORD
+        $rejected = $false
+        try { Assert-LabSqlSaPassword $bad } catch { $rejected = $true }
+        if (-not $rejected) { throw 'Reusing another lab password for sa was accepted.' }
+    }
     if ($settings.AUTO_SHUTDOWN_TIME_ZONE -ne 'Central Standard Time') {
         throw 'Literal configuration values were not preserved.'
     }
@@ -87,14 +123,24 @@ try {
         & (Join-Path $PSScriptRoot 'init-config.ps1') | Out-Null
         $defaultPath = Join-Path $HOME 'ArcJumpstart/rg-arc-jumpstart-v2.env'
         $defaultSettings = Read-LabSettings $defaultPath
+        Assert-LabSqlSaPassword $defaultSettings
+        if ($defaultSettings.SQL_SA_PASSWORD.Length -ne 52) { throw 'Generate a long private sa password for each new lab.' }
         if ($defaultSettings.AZURE_RESOURCE_GROUP -ne 'rg-arc-jumpstart-v2-infra' -or
-            $defaultSettings.ARC_RESOURCE_GROUP -ne 'rg-arc-jumpstart-v2-arc') {
+            $defaultSettings.ARC_RESOURCE_GROUP -ne 'rg-arc-jumpstart-v2-arc' -or
+            $defaultSettings.WINDOWS_SERVER_VERSION -cne '2025' -or
+            $defaultSettings.IMAGE_MODE -cne 'installation-media' -or
+            $defaultSettings.INCLUDE_APPLIANCE_VM -cne 'true' -or
+            $defaultSettings.NESTED_WINDOWS_PASSWORD -cne 'JS123!!') {
             throw 'Default configuration must use the root for its filename and paired resource groups.'
         }
         $original = [System.IO.File]::ReadAllText($defaultPath)
         & (Join-Path $PSScriptRoot 'init-config.ps1') -ResourceGroupRoot 'second-lab' | Out-Null
         $secondPath = Join-Path $HOME 'ArcJumpstart/second-lab.env'
         $secondSettings = Read-LabSettings $secondPath
+        Assert-LabSqlSaPassword $secondSettings
+        if ($secondSettings.SQL_SA_PASSWORD -ceq $defaultSettings.SQL_SA_PASSWORD) {
+            throw 'Separate labs must not share a generated sa password.'
+        }
         if ($secondSettings.AZURE_RESOURCE_GROUP -ne 'second-lab-infra' -or
             $secondSettings.ARC_RESOURCE_GROUP -ne 'second-lab-arc' -or
             [System.IO.File]::ReadAllText($defaultPath) -ne $original) {
@@ -142,9 +188,12 @@ try {
     $firstPath = $env:ENV_FILE
     $env:ENV_FILE = Join-Path (Split-Path -Parent $firstPath) 'second-lab.env'
     & (Join-Path $PSScriptRoot 'init-config.ps1') | Out-Null
+    $secondText = [System.IO.File]::ReadAllText($env:ENV_FILE)
     if ([System.IO.File]::ReadAllText($firstPath) -ne $first -or
-        [System.IO.File]::ReadAllText($env:ENV_FILE) -ne $first) {
-        throw 'Creating a second lab changed the existing configuration or template.'
+        [regex]::Replace($secondText, '(?m)^SQL_SA_PASSWORD=[^\r\n]*', '') -ne
+        [regex]::Replace($first, '(?m)^SQL_SA_PASSWORD=[^\r\n]*', '') -or
+        (Read-LabSettings $env:ENV_FILE).SQL_SA_PASSWORD -ceq (Read-LabSettings $firstPath).SQL_SA_PASSWORD) {
+        throw 'Creating a second lab must preserve the first and change only its generated sa password.'
     }
     if ($IsWindows) {
         foreach ($path in @((Split-Path -Parent $env:ENV_FILE), $env:ENV_FILE)) {
@@ -196,6 +245,8 @@ try {
         $name = if ($call -contains '--name') { $call[([array]::IndexOf($call, '--name') + 1)] } else { '' }
         switch ($key) {
             'account show --query' { return 'user' }
+            'account get-access-token --resource' { return 'FakeStorageToken' }
+            'ad signed-in-user show' { return '11111111-1111-1111-1111-111111111111' }
             'group exists --name' {
                 if ($ExistingTarget -eq 'error') {
                     $global:LASTEXITCODE = 1
@@ -207,15 +258,79 @@ try {
             }
             'group create --name' {
                 if ($ExistingTarget) { throw 'Collision gate allowed a resource group mutation.' }
+                if ($ReuseMedia -and $name -eq 'mock-media') { throw 'Existing media resource group must not be redeployed.' }
+                return ''
+            }
+            'storage container-rm show' {
+                if (-not $ReuseMedia -or $call -notcontains 'sqlmediamock') {
+                    throw 'Validate the explicitly approved existing container before referencing it.'
+                }
                 return ''
             }
             'deployment group create' {
                 $global:LabTestDeployed.Add($name)
                 $file = $call[([array]::IndexOf($call, '--parameters') + 1)].TrimStart('@')
                 if (-not (Test-Path -LiteralPath $file)) { throw 'Parameter file was not available to Azure CLI.' }
+                if ($name -eq 'arc-jumpstart-45-sql-install') {
+                    $p = (Get-Content -LiteralPath $file -Raw | ConvertFrom-Json).parameters
+                    if ($p.sqlSaPassword.value -cne $settings.SQL_SA_PASSWORD) {
+                        throw 'The single configured sa password must reach stage 45 for Developer and licensed media.'
+                    }
+                }
+                if ($InstallationMedia) {
+                    $parameters = (Get-Content -LiteralPath $file -Raw | ConvertFrom-Json).parameters
+                    if ($name -in @('arc-jumpstart-10-hyperv-host', 'arc-jumpstart-30-images', 'arc-jumpstart-40-nested-vms') -and
+                        $parameters.windowsServerVersion.value -cne $WindowsVersion) {
+                        throw 'The selected Windows version must reach the Marketplace host and both guest-image stages.'
+                    }
+                    if ($name -eq 'arc-jumpstart-30-images' -and
+                        ($parameters.imageMode.value -ne 'installation-media' -or
+                        $parameters.windowsIsoSha256.value -ne ('a' * 64) -or
+                        $parameters.nestedWindowsPassword.value -cne 'JS123!!')) {
+                        throw 'Installation media and protected credentials did not reach stage 30.'
+                    }
+                    if ($name -eq 'arc-jumpstart-40-nested-vms' -and
+                        ($parameters.imageMode.value -ne 'installation-media' -or
+                        $parameters.windowsLicenseMode.value -ne 'evaluation' -or
+                        $parameters.windowsImageFileName.value -ne "InstallationMedia/Windows-Server-$WindowsVersion-Eval.vhdx" -or
+                        $parameters.includeAppliance.value -ne $true -or
+                        $parameters.linuxImageFileName.value -ne 'InstallationMedia/Ubuntu-22.04.vhdx')) {
+                        throw 'Stage 40 did not consume the newly built media disks and evaluation licensing.'
+                    }
+                }
                 if ($name -eq 'arc-jumpstart-auto-shutdown') {
                     $enabled = (Get-Content -LiteralPath $file -Raw | ConvertFrom-Json).parameters.enabled.value
                     if ($enabled -ne $false) { throw 'Shutdown decision did not reach Bicep.' }
+                }
+                if ($name -eq 'arc-jumpstart-00-foundation') {
+                    $p = (Get-Content -LiteralPath $file -Raw | ConvertFrom-Json).parameters
+                    if ($p.sqlMediaResourceGroup.value -ne 'mock-media') { throw 'Private media must have a separate durable group.' }
+                    if ($p.existingSqlMediaAccountName.value -cne $(if ($ReuseMedia) { 'sqlmediamock' } else { '' })) {
+                        throw 'An existing media account must only be referenced with explicit approval.'
+                    }
+                }
+                if ($name -eq 'arc-jumpstart-45-sql-install' -and $ContinueMedia) {
+                    $p = (Get-Content -LiteralPath $file -Raw | ConvertFrom-Json).parameters
+                    if ($p.sqlEditionMode.value -ne 'licensed' -or
+                        $p.sqlMediaAccountName.value -ne 'sqlmediamock' -or $p.sqlDownloadUrl.value) {
+                        throw 'Licensed SQL mode must use the private account, not Developer downloads.'
+                    }
+                }
+                if ($name -eq 'arc-jumpstart-sql-media') {
+                    $p = (Get-Content -LiteralPath $file -Raw | ConvertFrom-Json).parameters
+                    if (($ContinueMedia -or $ReuseMedia) -and $p.manifestWriteToken.value -ne 'FakeStorageToken') {
+                        throw 'Root-upload registration requires an operator token in the protected parameter file.'
+                    }
+                    if (-not $ContinueMedia -and -not $ReuseMedia -and $p.PSObject.Properties.Name -contains 'manifestWriteToken') {
+                        throw 'Staging the desktop uploader must not request a storage write token.'
+                    }
+                    if ($ReuseMedia -and $p.action.value -cne 'check') {
+                        throw 'Reuse must verify existing media automatically, not request another upload.'
+                    }
+                    if ($MediaCheckFailure) {
+                        $global:LASTEXITCODE = 9
+                        return 'Mock shared-media validation failed.'
+                    }
                 }
                 if ($BastionFailure -and $name -eq 'arc-jumpstart-bastion') {
                     $global:LASTEXITCODE = 7
@@ -230,7 +345,17 @@ try {
             'deployment group show' {
                 $query = $call[([array]::IndexOf($call, '--query') + 1)]
                 if ($query -eq 'properties.outputs.hostSubnetId.value') { return '/mock/subnet' }
+                if ($query -eq 'properties.outputs.sqlMedia.value') {
+                    return '{"accountName":"sqlmediamock","accountId":"/mock/storage","containerId":"/mock/storage/container"}'
+                }
                 return 'Succeeded'
+            }
+            'deployment group list' {
+                if ($AlreadyContinued) { return '[{"name":"arc-jumpstart-50-domain","state":"Succeeded"}]' }
+                if ($PreparedOs) {
+                    return '[{"name":"arc-jumpstart-20-host-network","state":"Succeeded"},{"name":"arc-jumpstart-30-images","state":"Succeeded"},{"name":"arc-jumpstart-40-nested-vms","state":"Succeeded"}]'
+                }
+                return '[]'
             }
             'network vnet show' { return 'Succeeded' }
             'vm show --resource-group' { $global:LASTEXITCODE = 1; return '' }
@@ -288,9 +413,22 @@ try {
         }
         return
     }
-    & (Join-Path $PSScriptRoot 'deploy.ps1') -Stage all
+    & (Join-Path $PSScriptRoot 'deploy.ps1') -Stage $(if ($ContinueMedia) { 'continue' } elseif ($OsOnly) { 'os-only' } else { 'all' })
+    if ($OsOnly) {
+        $expectedOs = 'arc-jumpstart-00-foundation|arc-jumpstart-bastion|arc-jumpstart-10-hyperv-host|arc-jumpstart-auto-shutdown|arc-jumpstart-sql-media|arc-jumpstart-30-images|arc-jumpstart-20-host-network|arc-jumpstart-40-nested-vms'
+        if (($global:LabTestDeployed -join '|') -ne $expectedOs) { throw 'OS-only trial must run through stage 40 without SQL, domain or Arc setup.' }
+        return
+    }
+    if ($LicensedMedia) {
+        if ($LASTEXITCODE -ne 2 -or ($global:LabTestDeployed -join '|') -ne
+            'arc-jumpstart-00-foundation|arc-jumpstart-bastion|arc-jumpstart-10-hyperv-host|arc-jumpstart-auto-shutdown|arc-jumpstart-sql-media') {
+            throw 'Licensed mode must pause with exit 2 after host/media preparation, before all guest stages.'
+        }
+        $global:LASTEXITCODE = 0
+        return
+    }
     $registrationCalls = @($global:LabTestCalls | Where-Object { ($_ -join ' ') -match 'provider register' })
-    if ($registrationCalls.Count -ne 1) {
+    if ($registrationCalls.Count -ne $(if ($ContinueMedia) { 0 } else { 1 })) {
         throw 'Full deployment must register DataMigration once.'
     }
     if ($NetworkFailure -or $ImageFailure) { throw 'Failed stage unexpectedly returned success.' }
@@ -302,6 +440,20 @@ try {
         'arc-jumpstart-50-domain', 'arc-jumpstart-60-sql-ag',
         'arc-jumpstart-ssms',
         'arc-jumpstart-arc-launchers')
+    if ($ContinueMedia) {
+        $expected = @('arc-jumpstart-sql-media') + @($expected | Where-Object {
+            $_ -notin @('arc-jumpstart-00-foundation', 'arc-jumpstart-bastion',
+                'arc-jumpstart-10-hyperv-host', 'arc-jumpstart-auto-shutdown')
+        })
+        if ($PreparedOs) {
+            $expected = @($expected | Where-Object {
+                $_ -notin @('arc-jumpstart-20-host-network', 'arc-jumpstart-30-images', 'arc-jumpstart-40-nested-vms')
+            })
+        }
+    }
+    if ($ReuseMedia) {
+        $expected = $expected[0..3] + @('arc-jumpstart-sql-media') + $expected[4..($expected.Count - 1)]
+    }
     if ($DisableBastion) { $expected = @($expected | Where-Object { $_ -ne 'arc-jumpstart-bastion' }) }
     if ($DisableLaunchers) { $expected = @($expected | Where-Object { $_ -ne 'arc-jumpstart-arc-launchers' }) }
     if ($DisableSsms) { $expected = @($expected | Where-Object { $_ -ne 'arc-jumpstart-ssms' }) }
@@ -314,8 +466,8 @@ try {
     $bastionCall = @($global:LabTestCalls | Where-Object {
         ($_ -join ' ') -match 'arc-jumpstart-bastion'
     })
-    if (($DisableBastion -and $bastionCall.Count -ne 0) -or
-        (-not $DisableBastion -and ($bastionCall.Count -ne 1 -or
+    if ((($DisableBastion -or $ContinueMedia) -and $bastionCall.Count -ne 0) -or
+        (-not $DisableBastion -and -not $ContinueMedia -and ($bastionCall.Count -ne 1 -or
             $bastionCall[0] -notcontains '--no-wait'))) {
         throw 'Bastion must be submitted once without waiting.'
     }
@@ -326,14 +478,54 @@ try {
     if (@($global:LabTestCalls | Where-Object { ($_ -join ' ') -match 'FakeOnly-123!' }).Count) {
         throw 'A password appeared on the Azure CLI command line.'
     }
+    if (@($global:LabTestCalls | Where-Object { ($_ -join ' ') -match 'FakeStorageToken' }).Count) {
+        throw 'A storage token appeared on the Azure CLI command line.'
+    }
+    if ($ContinueMedia -or $ReuseMedia) { return }
+    if ($InstallationMedia) {
+        $global:MediaDownloadChecks = [Collections.Generic.List[string]]::new()
+        function Invoke-WebRequest {
+            param($Uri, $Method, $TimeoutSec)
+            $global:MediaDownloadChecks.Add([string]$Uri)
+            @{ Headers = @{ 'Content-Length' = '1024' } }
+        }
+        & (Join-Path $PSScriptRoot 'preflight.ps1') -Profile infra
+        if ($global:MediaDownloadChecks.Count -ne 3 -or
+            @($global:MediaDownloadChecks | Where-Object { $_ -match 'jumpstartprodsg|arcbox' }).Count -or
+            $global:MediaDownloadChecks -notcontains 'https://example.invalid/windows.iso' -or
+            $global:MediaDownloadChecks -notcontains 'https://example.invalid/ubuntu.iso') {
+            throw 'Media preflight must check only direct OS/SQL downloads, never Jumpstart storage.'
+        }
+        return
+    }
     if ($BastionFailure -or $DisableBastion -or $DisableLaunchers -or $DisableSsms -or $SsmsFailure) { return }
+    foreach ($case in @('LicensedMedia', 'ContinueMedia', 'OsOnly')) {
+        $result = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath "-$case" 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) { throw "Licensed orchestration failed ($case): $result" }
+        if ($case -eq 'OsOnly' -and ($result.IndexOf('OS_IMAGE_TEST_READY:') -lt $result.IndexOf('==> Stage 40:'))) {
+            throw 'Never declare OS trial readiness before the stage-40 gates.'
+        }
+        $result = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath -ReuseMedia 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) { throw "Reusing existing licensed SQL media failed: $result" }
+        $failed = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath -ReuseMedia -MediaCheckFailure 2>&1 | Out-String
+        if ($LASTEXITCODE -eq 0 -or $failed -match '==> Stage (20|30|40|45):') {
+            throw 'Invalid or unavailable shared media must stop the build before guest preparation.'
+        }
+    }
+    $result = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath -ContinueMedia -PreparedOs 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "OS-only trial continuation failed: $result" }
+    $result = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath -ContinueMedia -AlreadyContinued 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $result -notmatch 'continuation has already been used' -or $result -match '==> Stage (00|10|40):') {
+        throw 'A second media continuation must not replay preparation or promoted guests.'
+    }
     $failed = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath -MigrationRegistrationFailure 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0 -or $failed -notmatch 'Azure CLI command failed' -or $failed -match '==> Stage 00:') {
         throw 'Provider registration failure did not stop deployment before foundation.'
     }
-    foreach ($target in @('infra', 'arc', 'error', 'invalid')) {
+    foreach ($target in @('infra', 'arc', 'media', 'error', 'invalid')) {
         $failed = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath -ExistingTarget $target 2>&1 | Out-String
         $expectedError = if ($target -in @('infra', 'arc')) { "Resource groups already exist: mock-$target" }
+            elseif ($target -eq 'media') { 'Private media group already exists' }
             elseif ($target -eq 'error') { 'Azure CLI command failed (exit 1): group exists --name' }
             else { 'Could not determine whether resource group' }
         if ($LASTEXITCODE -eq 0 -or $failed -notmatch [regex]::Escape($expectedError) -or
@@ -352,7 +544,7 @@ try {
         throw 'Image failure did not prevent stage 40.'
     }
     foreach ($mode in @('-BastionFailure', '-DisableBastion', '-DisableLaunchers',
-        '-DisableSsms', '-BastionOnly', '-ShutdownOnly', '-SsmsOnly')) {
+        '-DisableSsms', '-BastionOnly', '-ShutdownOnly', '-SsmsOnly', '-InstallationMedia')) {
         $result = & (Get-Command pwsh).Source -NoProfile -File $PSCommandPath $mode 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0) { throw "$mode regression failed: $result" }
     }

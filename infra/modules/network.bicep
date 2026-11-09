@@ -12,6 +12,7 @@ param hostSubnetPrefix string
 
 @description('Subnet reserved for Azure Bastion. Must be at least /26.')
 param bastionSubnetPrefix string
+param privateEndpointSubnetPrefix string
 
 var nsgName = '${namePrefix}-nsg-host'
 var vnetName = '${namePrefix}-vnet'
@@ -44,6 +45,13 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
         }
       }
       {
+        name: 'snet-private-endpoints'
+        properties: {
+          addressPrefix: privateEndpointSubnetPrefix
+          privateEndpointNetworkPolicies: 'Disabled'
+        }
+      }
+      {
         name: 'AzureBastionSubnet'
         properties: {
           addressPrefix: bastionSubnetPrefix
@@ -55,3 +63,5 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
 
 output vnetName string = vnet.name
 output hostSubnetId string = '${vnet.id}/subnets/snet-host'
+output privateEndpointSubnetId string = '${vnet.id}/subnets/snet-private-endpoints'
+output vnetId string = vnet.id

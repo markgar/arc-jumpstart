@@ -8,8 +8,13 @@ try {
     $settings = Read-LabSettings (Get-LabEnvironmentFile $repoRoot)
     Assert-LabSettings $settings @(
         'AZURE_SUBSCRIPTION_ID', 'AZURE_LOCATION', 'HOST_VM_SIZE',
-        'IMAGE_SOURCE_URL', 'SQL_DOWNLOAD_URL', 'AUTO_SHUTDOWN_ENABLED',
+        'AUTO_SHUTDOWN_ENABLED',
         'AUTO_SHUTDOWN_TIME', 'AUTO_SHUTDOWN_TIME_ZONE')
+    $imageSettings = Get-LabImageSettings $settings
+    $sqlSettings = Get-LabSqlSettings $settings
+    Assert-LabSqlSaPassword $settings
+    if ($sqlSettings.Mode -eq 'developer') { Assert-LabSettings $settings @('SQL_DOWNLOAD_URL') }
+    if ($imageSettings.Mode -eq 'jumpstart') { Assert-LabSettings $settings @('IMAGE_SOURCE_URL') }
     if ($settings.AUTO_SHUTDOWN_ENABLED -cnotin @('true', 'false')) {
         throw 'AUTO_SHUTDOWN_ENABLED must be explicitly set to true or false.'
     }
@@ -72,19 +77,35 @@ try {
         $failed = $true
     }
 
-    $base = $settings.IMAGE_SOURCE_URL.TrimEnd('/')
-    $token = if ($settings['IMAGE_SOURCE_SAS_TOKEN']) {
-        $settings['IMAGE_SOURCE_SAS_TOKEN'].TrimStart('?')
-    } else { '' }
-    foreach ($name in @(
-        $(if ($settings.WINDOWS_IMAGE_FILE_NAME) { $settings.WINDOWS_IMAGE_FILE_NAME } else { 'ArcBox-Win2K22.vhdx' }),
-        $(if ($settings.LINUX_IMAGE_FILE_NAME) { $settings.LINUX_IMAGE_FILE_NAME } else { 'ArcBox-Ubuntu-01.vhdx' }),
-        'SQL Server 2025 Enterprise Developer media source')) {
-        $uri = if ($name -like 'SQL Server*') { $settings.SQL_DOWNLOAD_URL } else {
-            "$base/$name" + $(if ($token) { "?$token" } else { '' })
+    $downloads = @()
+    if ($sqlSettings.Mode -eq 'developer') {
+        $downloads += @{ Name = 'SQL Server 2025 Enterprise Developer media source'; Uri = $settings.SQL_DOWNLOAD_URL }
+    }
+    else { Write-Host 'Licensed SQL mode: private ISO upload and host access are checked at the saved post-stage-10 media checkpoint.' }
+    if ($imageSettings.Mode -eq 'installation-media') {
+        $downloads += @{ Name = "Windows Server $($imageSettings.WindowsServerVersion) Evaluation ISO"; Uri = $settings.WINDOWS_ISO_URL }
+        if ($imageSettings.IncludeLinux) {
+            $downloads += @{ Name = 'Ubuntu Server 22.04 ISO'; Uri = $settings.UBUNTU_ISO_URL }
         }
+    }
+    else {
+        $base = $settings.IMAGE_SOURCE_URL.TrimEnd('/')
+        $token = if ($settings['IMAGE_SOURCE_SAS_TOKEN']) {
+            $settings['IMAGE_SOURCE_SAS_TOKEN'].TrimStart('?')
+        } else { '' }
+        $imageNames = @($imageSettings.WindowsFileName)
+        if ($imageSettings.IncludeLinux) { $imageNames += $imageSettings.LinuxFileName }
+        foreach ($name in $imageNames) {
+            $downloads += @{
+                Name = $name
+                Uri = "$base/$name" + $(if ($token) { "?$token" } else { '' })
+            }
+        }
+    }
+    foreach ($download in $downloads) {
+        $name = $download.Name
         try {
-            $response = Invoke-WebRequest -Uri $uri -Method Head -TimeoutSec 30
+            $response = Invoke-WebRequest -Uri $download.Uri -Method Head -TimeoutSec 30
             $size = [long]@($response.Headers['Content-Length'])[0]
             Write-Host ('Download reachable: {0} ({1:N1} GiB)' -f $name, ($size / 1GB))
         }

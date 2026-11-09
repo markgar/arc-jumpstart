@@ -20,6 +20,9 @@ implementation.
    Linux. WSL2 is not required for the PowerShell entry points.
 4. Confirm the approved Azure subscription, dedicated resource group, region,
    cost scope, and auto-shutdown decision before provisioning.
+   Explicitly ask whether to use default SQL Developer or the user's own
+   authorized pre-keyed SQL Server 2025 Standard and Enterprise ISOs; record
+   `SQL_EDITION_MODE=licensed` for the latter.
 5. Use a private `ENV_FILE` outside the repository. For new labs, use
    `init-config.ps1 -ResourceGroupRoot <root>` to create
    `$HOME/ArcJumpstart/<root>.env` in a visible,
@@ -32,6 +35,29 @@ implementation.
 
 If required information is missing, ask only for that information. Apply the
 documented defaults for routine choices.
+
+New labs use the ordinary Azure Marketplace Windows Server 2025 Datacenter
+Gen2 (`2025-datacenter-g2`) host, not a custom image or Hotpatch SKU.
+Keep manual patching and controlled host restarts. For default `IMAGE_MODE=installation-media`,
+use the approved Windows Server 2025
+Evaluation source (host-side publisher verification or an approved checksum),
+the pinned Ubuntu 22.04.5 ISO when Linux is included, the fixed public lab-only
+Windows guest password `JS123!!`, and the operator's Linux SSH public key.
+Keep host/DSRM/SQL service passwords unique and strong.
+New private configurations also generate one 52-character `SQL_SA_PASSWORD`.
+Use that same saved password for all four Database Engines, installed in mixed
+mode with `sa` enabled and Windows admins retained; SSAS has no `sa` login.
+Never print it, generate separate per-guest values, rotate it on retry, or
+implicitly convert an existing Windows-only instance.
+`INCLUDE_APPLIANCE_VM=true` reserves `JS-MIGRATE-01` with 8 vCPUs / 16 GiB RAM
+as an unused workgroup Windows VM: no SQL, domain join, Arc launchers, or
+appliance installation/registration. Existing files without version/appliance
+settings retain Server 2022 and no appliance VM; do not change a running lab.
+No Jumpstart images or
+user-hosted blobs are required. Follow the
+[media preparation/recovery contract](../../scripts/README.md#installation-media-images).
+This mode is experimental until all clean-build gates pass. Do not convert
+Evaluation to KMS/retail or reset its evaluation period.
 
 ## New deployment
 
@@ -55,6 +81,35 @@ Use one-shot progress checks only when useful:
 ```powershell
 ./scripts/lab.ps1 build-status
 ```
+
+### User-supplied SQL media
+
+When the user already uploaded authorized SQL media, ask whether to reuse that
+account. Set both `SQL_MEDIA_RESOURCE_GROUP` and `SQL_MEDIA_ACCOUNT_NAME` only
+with explicit approval. The existing account settings and uploads are not
+redeployed; the new host gets private read access. `all` validates the existing
+media after stage `10` and continues without another upload handoff.
+
+With new media storage, licensed mode intentionally pauses after host/private-storage preparation.
+Tell the user before deployment, then at the pause give the actual host name,
+storage account, media resource group and `sql-media` container URL from the
+foundation outputs. Ask which upload route they want:
+
+- On the outer host, open `Upload licensed SQL media.cmd`, select both ISOs,
+  and complete user authentication; the launcher publishes its manifest.
+- Upload directly to the container root using approved private access. Keep
+  the original Microsoft SQL Server 2025 Standard/Enterprise ISO filenames,
+  or use `SQL2025-Standard.iso` and `SQL2025-Enterprise.iso`, exactly one each.
+
+Guide the chosen route. Do not require user-written JSON, reupload existing
+root ISOs, expose storage publicly, or add workstation networking just for media.
+After the user reports completion, run `deploy.ps1 continue` asynchronously
+using the same `ENV_FILE`. It reads an existing manifest or creates the missing
+one after validating and hashing root uploads. The operator's existing Azure
+sign-in authorizes publication via protected parameters; host identity stays
+read-only. Missing/ambiguous/invalid files are actionable input corrections,
+not reasons to rebuild Windows. Follow the
+[licensed-media runbook](../../scripts/README.md#licensed-sql-media).
 
 ## Recovery
 

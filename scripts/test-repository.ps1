@@ -92,6 +92,20 @@ foreach ($expected in @('AGENTS.md', 'docs/00-agent-bootstrap.md',
     Assert-Contains $skill $expected 'skill'
 }
 
+$hostTemplate = [IO.File]::ReadAllText((Join-Path $root 'infra/stages/10-hyperv-host/main.bicep'))
+Assert-Contains $hostTemplate "param windowsServerVersion string = '2025'" 'Host OS default'
+$imageReference = [regex]::Match($hostTemplate, '(?s)imageReference:\s*\{(.*?)\n\s*\}').Groups[1].Value
+foreach ($expected in @("publisher: 'MicrosoftWindowsServer'", "offer: 'WindowsServer'",
+    'sku: hostImageSku', "version: 'latest'")) {
+    Assert-Contains $imageReference $expected 'Standard Marketplace host image'
+}
+Assert-NotContains $imageReference 'id:' 'Standard Marketplace host image'
+foreach ($expected in @(
+    "var hostImageSku = windowsServerVersion == '2025' ? '2025-datacenter-g2' : '2022-datacenter-azure-edition'",
+    'enableAutomaticUpdates: false', "patchMode: 'Manual'")) {
+    Assert-Contains $hostTemplate $expected 'Non-Hotpatch host with controlled restarts'
+}
+
 $launcher = [System.IO.File]::ReadAllText((Join-Path $root 'artifacts/scripts/prepare-arc-device-code-launchers.ps1'))
 $stager = [System.IO.File]::ReadAllText((Join-Path $root 'artifacts/scripts/stage-arc-device-code-launchers.ps1'))
 $bicep = [System.IO.File]::ReadAllText((Join-Path $root 'infra/stages/arc-launchers/main.bicep'))

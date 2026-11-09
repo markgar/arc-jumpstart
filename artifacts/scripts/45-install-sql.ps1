@@ -35,7 +35,7 @@ Previous-version caches/tasks are left untouched; existing engines are never
 upgraded or replaced automatically.
 Logs: C:\ArcJumpstart\Logs on both machines, including copied SQL Setup logs.
 No password is written into a script, task, configuration file or transcript.
-The password MUST be supplied as a protected RunCommand parameter, not public
+Windows and SQL sa passwords MUST be supplied as protected RunCommand parameters, not public
 settings. Use the existing 14400-second managed RunCommand timeout. This stage
 has a 235-minute overall deadline, a 25-minute shared media phase and an isolated
 68-minute budget per concurrent guest (including copying, reboots and readiness).
@@ -62,7 +62,14 @@ param(
 
     [Parameter(Mandatory)]
     [ValidateNotNullOrEmpty()]
+    [string]$SqlSaPassword,
+
     [string]$SqlDownloadUrl,
+
+    [ValidateSet('developer', 'licensed')]
+    [string]$SqlEditionMode = 'developer',
+
+    [string]$SqlMediaAccountName,
 
     [Parameter(Mandatory)]
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$')]
@@ -85,6 +92,7 @@ if (@($VmNames | Sort-Object -Unique).Count -ne $VmNames.Count) {
 $ProgressPreference = 'SilentlyContinue'
 $script:stageDeadlineUtc = [DateTime]::UtcNow.AddMinutes(235)
 $script:phaseDeadlineUtc = $null
+# PRIVATE_SQL_MEDIA_HELPERS
 
 function Get-BudgetSeconds {
     param([int]$RequestedSeconds, [string]$Operation)
@@ -327,9 +335,10 @@ function Set-SqlCmdMachinePath {
 }
 
 function Test-SqlReady {
+    param([pscredential]$SqlCredential)
     Assert-SqlGuestIdentity
     if ($env:COMPUTERNAME -in @('JS-RETAIL-01', 'JS-INSIGHT-01')) {
-        $verified = & 'C:\ArcJumpstart\Sql2025\45-install-sql-engine.ps1' -VerifyOnly -PassThru
+        $verified = & 'C:\ArcJumpstart\Sql2025\45-install-sql-engine.ps1' -VerifyOnly -PassThru -SqlSaPassword $(if ($SqlCredential) { $SqlCredential.Password })
         if ($verified.Status -ne 'VerifiedExisting' -or -not $verified.AnalysisServices) {
             throw 'SSAS feature verification did not complete.'
         }
@@ -349,7 +358,14 @@ function Test-SqlReady {
     # EditionID -2117995310 identifies Enterprise Developer in major 17; Standard
     # Developer is -1785266663. EngineEdition 3 alone also includes Evaluation.
     # https://learn.microsoft.com/sql/t-sql/functions/serverproperty-transact-sql
-    $query = "SET NOCOUNT ON; IF ISNULL(IS_SRVROLEMEMBER(N'sysadmin'),0) <> 1 THROW 51000, 'Local Administrator is not sysadmin', 1; IF ISNULL(CONVERT(int,SERVERPROPERTY('IsIntegratedSecurityOnly')),0) <> 1 THROW 51000, 'Windows authentication required', 1; IF ISNULL(CONVERT(int,SERVERPROPERTY('ProductMajorVersion')),0) <> 17 OR ISNULL(CONVERT(int,SERVERPROPERTY('EditionID')),0) <> -2117995310 OR ISNULL(CONVERT(int,SERVERPROPERTY('EngineEdition')),0) <> 3 THROW 51000, 'SQL Server 2025 Enterprise Developer required', 1; IF CONVERT(nvarchar(128),SERVERPROPERTY('ServerName')) <> CONVERT(nvarchar(128),SERVERPROPERTY('MachineName')) THROW 51000, 'Default instance server name mismatch', 1; SELECT 1;"
+    $query = "SET NOCOUNT ON; IF ISNULL(IS_SRVROLEMEMBER(N'sysadmin'),0) <> 1 THROW 51000, 'Local Administrator is not sysadmin', 1; IF ISNULL(CONVERT(int,SERVERPROPERTY('IsIntegratedSecurityOnly')),1) <> 0 THROW 51000, 'Mixed mode required', 1; IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE principal_id=1 AND name=N'sa' AND is_disabled=0) THROW 51000, 'Enabled sa required', 1; IF ISNULL(CONVERT(int,SERVERPROPERTY('ProductMajorVersion')),0) <> 17 OR ISNULL(CONVERT(int,SERVERPROPERTY('EditionID')),0) <> -2117995310 OR ISNULL(CONVERT(int,SERVERPROPERTY('EngineEdition')),0) <> 3 THROW 51000, 'SQL Server 2025 Enterprise Developer required', 1; IF CONVERT(nvarchar(128),SERVERPROPERTY('ServerName')) <> CONVERT(nvarchar(128),SERVERPROPERTY('MachineName')) THROW 51000, 'Default instance server name mismatch', 1; SELECT 1;"
+    if (Test-Path -LiteralPath 'C:\ArcJumpstart\Sql2025\edition.json') {
+        $verified = & 'C:\ArcJumpstart\Sql2025\45-install-sql-engine.ps1' -VerifyOnly -PassThru -SqlSaPassword $SqlCredential.Password
+        if ($verified.Status -ne 'VerifiedExisting' -or -not $verified.Engine) {
+            throw 'Licensed SQL edition verification did not complete.'
+        }
+        $query = "SET NOCOUNT ON; IF ISNULL(IS_SRVROLEMEMBER(N'sysadmin'),0) <> 1 THROW 51000, 'Local Administrator is not sysadmin', 1; IF ISNULL(CONVERT(int,SERVERPROPERTY('IsIntegratedSecurityOnly')),1) <> 0 THROW 51000, 'Mixed mode required', 1; IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE principal_id=1 AND name=N'sa' AND is_disabled=0) THROW 51000, 'Enabled sa required', 1; IF CONVERT(nvarchar(128),SERVERPROPERTY('ServerName')) <> CONVERT(nvarchar(128),SERVERPROPERTY('MachineName')) THROW 51000, 'Default instance server name mismatch', 1; SELECT 1;"
+    }
     $output = & $expected -S localhost -E -b -C -l 15 -t 30 -h -1 -W -Q $query 2>&1
     if ($LASTEXITCODE -ne 0 -or ($output -join '').Trim() -ne '1') {
         throw "Local Administrator integrated SQL readiness failed: $($output -join ' ')"
@@ -358,10 +374,10 @@ function Test-SqlReady {
 }
 
 function Wait-SqlReady {
-    param([int]$TimeoutSeconds = 120)
+    param([int]$TimeoutSeconds = 120, [pscredential]$SqlCredential)
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
-        try { return Test-SqlReady }
+        try { return Test-SqlReady -SqlCredential $SqlCredential }
         catch { $failure = $_.Exception.Message }
         if ([DateTime]::UtcNow -ge $deadline) { break }
         Start-Sleep -Seconds 10
@@ -372,7 +388,7 @@ function Wait-SqlReady {
 '@
 
 $guestInstall = @'
-param([string]$AttemptId, [string]$DeadlineUtc)
+param([string]$AttemptId, [string]$DeadlineUtc, [pscredential]$SqlCredential)
 $ErrorActionPreference = 'Stop'
 $script:guestDeadlineUtc = [DateTime]::Parse($DeadlineUtc).ToUniversalTime()
 . 'C:\ArcJumpstart\Sql2025\guest-library.ps1'
@@ -384,6 +400,9 @@ $guestLock = [IO.File]::Open("$work\stage45-session.lock", 'OpenOrCreate', 'Read
 $result = [ordered]@{ Status = 'Running'; Logs = $logs; Error = ''; Engine = $null }
 try {
     $manifest = Get-Content "$work\payload.json" -Raw | ConvertFrom-Json
+    if ($manifest.MediaKind -eq 'EnterpriseDeveloperIso' -and (Test-Path "$work\edition.json")) {
+        throw 'A licensed edition profile already exists on this guest. Diagnose the mode change; no automatic replacement is permitted.'
+    }
     foreach ($file in $manifest.Files) {
         $path = Join-Path $work $file.Name
         if ((Get-FileHash $path -Algorithm SHA256).Hash -ne $file.Hash) { throw "Transferred media hash mismatch: $path" }
@@ -396,7 +415,7 @@ try {
     if (($script:guestDeadlineUtc - [DateTime]::UtcNow).TotalSeconds -lt $engineReserve) {
         throw 'Guest execution budget exhausted before the synchronous engine invocation.'
     }
-    $engine = & "$work\45-install-sql-engine.ps1" -PassThru
+    $engine = & "$work\45-install-sql-engine.ps1" -PassThru -SqlSaPassword $(if ($SqlCredential) { $SqlCredential.Password })
     $result.Engine = $engine
     if ($engine.Status -eq 'RebootRequired' -and $engine.SetupExitCode -eq 3010) {
         $result.Status = 'RebootRequired'
@@ -416,16 +435,19 @@ try {
     $readinessSeconds = [int][Math]::Min($readinessLimit,
         [Math]::Floor(($script:guestDeadlineUtc - [DateTime]::UtcNow).TotalSeconds))
     if ($readinessSeconds -lt 1) { throw 'Guest execution budget exhausted before live readiness.' }
-    $null = Wait-SqlReady -TimeoutSeconds $readinessSeconds
+    $null = Wait-SqlReady -TimeoutSeconds $readinessSeconds -SqlCredential $SqlCredential
     $result.Status = 'Verified'
     [pscustomobject]$result
 }
 catch {
     $result.Status = 'Failed'
     $result.Error = $_.Exception.Message
+    if ($SqlCredential) {
+        $result.Error = $result.Error.Replace($SqlCredential.GetNetworkCredential().Password, '[REDACTED]')
+    }
     $result['ExceptionType'] = $_.Exception.GetType().FullName
     $result['ScriptStackTrace'] = $_.ScriptStackTrace
-    throw
+    throw $result.Error
 }
 finally {
     $setupLogs = "$env:ProgramFiles\Microsoft SQL Server\170\Setup Bootstrap\Log"
@@ -442,6 +464,7 @@ finally {
 function Write-StageLog {
     param([string]$Message)
     $safe = $Message.Replace($NestedWindowsPassword, '[REDACTED]')
+    if ($SqlSaPassword) { $safe = $safe.Replace($SqlSaPassword, '[REDACTED]') }
     $line = '{0} {1}' -f [DateTime]::UtcNow.ToString('o'), $safe
     Add-Content -Path $logFile -Value $line
     Write-Host $line
@@ -477,6 +500,7 @@ function Get-SqlMediaCacheAction {
 }
 
 function Get-SqlPayload {
+    if ($SqlEditionMode -eq 'licensed') { return @(Get-LicensedSqlPayload) }
     $mediaDefinition = @(Get-SqlMediaDefinition $SqlDownloadUrl)
     $bindingPath = Join-Path $cache 'source.json'
     $binding = if (Test-Path $bindingPath) { Get-Content $bindingPath -Raw | ConvertFrom-Json } else { $null }
@@ -504,6 +528,79 @@ function Get-SqlPayload {
         Files = @($files | ForEach-Object { @{ Name = Split-Path $_ -Leaf; Hash = (Get-FileHash $_ -Algorithm SHA256).Hash } })
     } | ConvertTo-Json -Depth 4 | Set-Content "$cache\payload.json" -Encoding UTF8
     return @($files + @("$cache\payload.json"))
+}
+
+function Get-LicensedSqlPayload {
+    if (Test-Path (Join-Path $cache 'source.json')) {
+        throw 'A Developer source binding already exists. Do not silently change the SQL edition of an existing lab.'
+    }
+    $manifestPath = Join-Path $cache "licensed-manifest-$RunId.json"
+    $manifest = Get-PrivateSqlManifest -AccountName $SqlMediaAccountName -Destination $manifestPath
+    $sources = @(foreach ($entry in $manifest.Media | Sort-Object Edition) {
+        $profile = $entry | Select-Object Edition, Name, Size, Sha256
+        if ($entry.PSObject.Properties.Name -contains 'SourceBlobName') {
+            $profile | Add-Member NoteProperty SourceBlobName $entry.SourceBlobName
+        }
+        $profile
+    })
+    $source = "$SqlMediaAccountName/" + ($sources | ConvertTo-Json -Compress)
+    $licensed = Join-Path $cache 'Licensed'
+    New-Item -ItemType Directory -Path $licensed -Force | Out-Null
+    $bindingPath = Join-Path $licensed 'source.json'
+    if (Test-Path -LiteralPath $bindingPath) {
+        $binding = Get-Content -LiteralPath $bindingPath -Raw | ConvertFrom-Json
+        if ($binding.Source -cne $source) {
+            throw 'The approved private SQL media manifest changed. Preserve existing installs and explicitly investigate the source change before retrying.'
+        }
+    }
+    else {
+        if (@(Get-ChildItem -LiteralPath $licensed -Force).Count) { throw 'Unbound licensed SQL cache exists; do not adopt unproven media.' }
+        @{ Source = $source } | ConvertTo-Json | Set-Content -LiteralPath "$bindingPath.new" -Encoding UTF8
+        Move-Item -LiteralPath "$bindingPath.new" -Destination $bindingPath
+    }
+    $script:licensedPayloads = @{}
+    foreach ($entry in $manifest.Media) {
+        [void](Get-BudgetSeconds 1 'private SQL media preparation')
+        $directory = Join-Path $licensed $entry.Edition
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        $iso = Join-Path $directory $entry.Name
+        if (-not (Test-Path -LiteralPath $iso)) {
+            $partial = "$iso.partial"
+            $sourceBlob = if ($entry.PSObject.Properties.Name -contains 'SourceBlobName') { $entry.SourceBlobName } else { $entry.Name }
+            Receive-PrivateSqlBlob -AccountName $SqlMediaAccountName -BlobName $sourceBlob -Path $partial -MaximumSize $entry.Size `
+                -TimeoutSeconds (Get-BudgetSeconds 1200 'private SQL ISO download')
+            if ((Get-Item -LiteralPath $partial).Length -ne $entry.Size -or
+                (Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash -ine $entry.Sha256) {
+                throw "Licensed $($entry.Edition) ISO does not match the uploaded SHA256/length; partial media is preserved."
+            }
+            Move-Item -LiteralPath $partial -Destination $iso
+        }
+        if ((Get-Item -LiteralPath $iso).Length -ne $entry.Size -or
+            (Get-FileHash -LiteralPath $iso -Algorithm SHA256).Hash -ine $entry.Sha256) {
+            throw "Cached licensed $($entry.Edition) media failed verification."
+        }
+        [void](Get-BudgetSeconds 1 'private SQL ISO verification')
+        @{ Version = 1; Edition = $entry.Edition; Name = $entry.Name; Size = $entry.Size; Sha256 = $entry.Sha256 } |
+            ConvertTo-Json | Set-Content -LiteralPath "$directory\edition.json" -Encoding UTF8
+        $guestLibrary | Set-Content -LiteralPath "$directory\guest-library.ps1" -Encoding UTF8
+        $script:engineScript | Set-Content -LiteralPath "$directory\45-install-sql-engine.ps1" -Encoding UTF8
+        $files = @($iso, "$directory\edition.json", "$directory\guest-library.ps1", "$directory\45-install-sql-engine.ps1")
+        @{
+            MediaKind = 'LicensedIso'
+            Files = @($files | ForEach-Object { @{ Name = Split-Path $_ -Leaf; Hash = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash } })
+        } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath "$directory\payload.json" -Encoding UTF8
+        $script:licensedPayloads[$entry.Edition] = @($files + @("$directory\payload.json"))
+    }
+    return @($script:licensedPayloads.Standard + $script:licensedPayloads.Enterprise)
+}
+
+function Get-LicensedSqlGuestEdition {
+    param([string]$VMName)
+    switch ($VMName) {
+        { $_ -in @('JS-SQL-AG-01', 'JS-SQL-AG-02') } { 'Enterprise' }
+        { $_ -in @('JS-SQL-01', 'JS-RETAIL-01', 'JS-INSIGHT-01') } { 'Standard' }
+        default { throw "No licensed SQL edition profile for $VMName." }
+    }
 }
 
 function Copy-SqlPayload {
@@ -630,14 +727,14 @@ function Complete-SqlGuest {
             $attemptId = "$RunId-$([guid]::NewGuid().ToString('N'))"
             Write-StageLog "$VMName starting synchronous SQL/SSAS feature installation and readiness ($attemptId)."
             $result = Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create($guestInstall)) `
-                -ArgumentList $attemptId, $deadlineUtc -ErrorAction Stop
+                -ArgumentList $attemptId, $deadlineUtc, $sqlCredential -ErrorAction Stop
             $null = Get-BudgetSeconds 1 "completed synchronous installation on $VMName"
             if ($result.Status -eq 'Verified') {
                 if ($VMName -eq 'JS-INSIGHT-01') {
                     Write-StageLog "$VMName verified: SSAS 2025 Tabular service and TCP 2383; no relational engine."
                 }
                 else {
-                    Write-StageLog "$VMName verified: SQL 2025 Enterprise Developer, integrated sysadmin SELECT 1, bundled sqlcmd 17, native SQL WMI."
+                    Write-StageLog "$VMName verified: assigned SQL 2025 edition, mixed mode, encrypted sa sysadmin query, integrated sysadmin SELECT 1, bundled sqlcmd 17, native SQL WMI."
                     if ($VMName -eq 'JS-RETAIL-01') { Write-StageLog "$VMName also verified: SSAS 2025 Tabular service and TCP 2383." }
                 }
                 return
@@ -664,6 +761,8 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 . ([scriptblock]::Create($Context.Definitions))
 $credential = $Context.Credential
+$sqlCredential = $Context.SqlCredential
+$SqlSaPassword = if ($sqlCredential) { $sqlCredential.GetNetworkCredential().Password } else { '' }
 $NestedWindowsPassword = $credential.GetNetworkCredential().Password
 $RunId = $Context.RunId
 $logRoot = $Context.LogRoot
@@ -682,13 +781,16 @@ catch {
     $status = 'Failed'
     $failureText = "[$($_.Exception.GetType().FullName)] $($_.Exception.Message)`nScriptStackTrace: $($_.ScriptStackTrace)"
     $failureText = $failureText.Replace($NestedWindowsPassword, '[REDACTED]')
+    if ($SqlSaPassword) { $failureText = $failureText.Replace($SqlSaPassword, '[REDACTED]') }
     try { Write-StageLog "$($Context.VMName) failed: $failureText" } catch { }
 }
 finally {
     $script:phaseDeadlineUtc = $null
     try { Export-SqlGuestLogs $Context.VMName } catch { }
     $credential = $null
+    $sqlCredential = $null
     Remove-Variable NestedWindowsPassword -ErrorAction SilentlyContinue
+    Remove-Variable SqlSaPassword -ErrorAction SilentlyContinue
 }
 [pscustomobject]@{ VMName = $Context.VMName; Status = $status; Error = $failureText; LogFile = $logFile }
 '@
@@ -724,7 +826,9 @@ function Invoke-ParallelSqlGuests {
             try {
                 $context = [pscustomobject]@{
                     VMName = $name; Credential = $credential; Definitions = $definitions
-                    Payload = $payload; GuestInstall = $guestInstall; LogRoot = $logRoot; RunId = $RunId
+                    SqlCredential = $(if ($name -ne 'JS-INSIGHT-01') { $sqlCredential } else { $null })
+                    Payload = $(if ($SqlEditionMode -eq 'licensed') { $script:licensedPayloads[(Get-LicensedSqlGuestEdition $name)] } else { $payload })
+                    GuestInstall = $guestInstall; LogRoot = $logRoot; RunId = $RunId
                     DeadlineUtc = $script:stageDeadlineUtc.ToString('o')
                 }
                 $job = Start-Job -Name "stage45-$RunId-$name" -ScriptBlock ([scriptblock]::Create($sqlGuestWorker)) `
@@ -771,6 +875,7 @@ $logRoot = 'C:\ArcJumpstart\Logs'
 $cache = 'F:\ArcJumpstart\Sql2025'
 $logFile = Join-Path $logRoot "45-install-sql-$RunId.log"
 $credential = [pscredential]::new('Administrator', (ConvertTo-SecureString $NestedWindowsPassword -AsPlainText -Force))
+$sqlCredential = [pscredential]::new('sa', (ConvertTo-SecureString $SqlSaPassword -AsPlainText -Force))
 $script:payload = $null
 $lock = $null
 try {
@@ -804,7 +909,9 @@ catch {
 finally {
     if ($lock) { try { $lock.Dispose() } catch { } }
     $credential = $null
+    $sqlCredential = $null
     # Do not assign null/empty to a ValidateNotNullOrEmpty parameter during
     # unwinding: parameter validation would replace the original exception.
     Remove-Variable -Name NestedWindowsPassword -ErrorAction SilentlyContinue
+    Remove-Variable -Name SqlSaPassword -ErrorAction SilentlyContinue
 }

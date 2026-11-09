@@ -8,6 +8,17 @@ param(
 
     [string]$ImageSourceSasToken = '',
 
+    [ValidateSet('jumpstart', 'installation-media')]
+    [string]$ImageMode = 'jumpstart',
+    [ValidateSet('true', 'false')][string]$IncludeLinux = 'true',
+    [ValidateSet('2022', '2025')][string]$WindowsServerVersion = '2022',
+    [string]$WindowsIsoUrl,
+    [string]$WindowsIsoSha256,
+    [string]$UbuntuIsoUrl,
+    [string]$UbuntuIsoSha256,
+    [string]$LinuxSshPublicKey,
+    [string]$NestedWindowsPassword,
+
     [Parameter(Mandatory)]
     [string]$RunId
 )
@@ -21,7 +32,21 @@ $imageRoot = 'F:\ArcJumpstart\Images'
 New-Item -ItemType Directory -Path $logRoot, $imageRoot -Force | Out-Null
 Start-Transcript -Path (Join-Path $logRoot "30-download-images-$RunId.log") -Force
 
+# IMAGE_MEDIA_HELPERS
+
+$imageLock = $null
 try {
+    if ($ImageMode -eq 'installation-media') {
+        $ImageStage = '30'
+        Protect-ImageBuildDirectory 'F:\ArcJumpstart\Images\InstallationMedia'
+        $imageLock = [IO.File]::Open('F:\ArcJumpstart\Images\InstallationMedia\build.lock', 'OpenOrCreate', 'ReadWrite', 'None')
+        Initialize-InstallationMedia -WindowsUrl $WindowsIsoUrl -WindowsHash $WindowsIsoSha256 `
+            -WindowsServerVersion $WindowsServerVersion `
+            -IncludeLinux:($IncludeLinux -eq 'true') -UbuntuUrl $UbuntuIsoUrl -UbuntuHash $UbuntuIsoSha256 `
+            -Password $NestedWindowsPassword -PublicKey $LinuxSshPublicKey
+        Write-ImagePhase "Selected installation media prepared (IncludeLinux=$IncludeLinux); guest readiness checks run in stage 40."
+        return
+    }
     Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage30] Preparing the image cache and AzCopy."
     $azCopy = Join-Path $root 'Tools\azcopy.exe'
     if (-not (Test-Path $azCopy)) {
@@ -69,5 +94,6 @@ try {
     Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage30] Required image cache is ready."
 }
 finally {
+    if ($imageLock) { $imageLock.Dispose() }
     Stop-Transcript
 }

@@ -24,6 +24,16 @@ param(
     [Parameter(Mandatory)]
     [string]$NestedWindowsPassword,
 
+    [ValidateSet('jumpstart', 'installation-media')]
+    [string]$ImageMode = 'jumpstart',
+    [ValidateSet('true', 'false')][string]$IncludeLinux = 'true',
+    [ValidateSet('true', 'false')][string]$IncludeAppliance = 'false',
+    [ValidateSet('2022', '2025')][string]$WindowsServerVersion = '2022',
+    [ValidateSet('azure-kms', 'evaluation')]
+    [string]$WindowsLicenseMode = 'azure-kms',
+    [string]$UbuntuIsoSha256,
+    [string]$LinuxSshPublicKey,
+
     [Parameter(Mandatory)]
     [string]$RunId
 )
@@ -44,6 +54,8 @@ else {
 }
 New-Item -ItemType Directory -Path $logRoot, $generalizedImageRoot, $vmRoot -Force | Out-Null
 Start-Transcript -Path (Join-Path $logRoot "40-create-nested-vms-$RunId.log") -Force
+
+# IMAGE_MEDIA_HELPERS
 
 function Wait-VMHeartbeat {
     param(
@@ -234,8 +246,22 @@ function Enable-WindowsGuestEnhancedSession {
 function Get-WindowsServer2022KmsConfiguration {
     $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
     $edition = (Get-WindowsEdition -Online -ErrorAction Stop).Edition
-    if ($os.BuildNumber -ne '20348' -or $os.ProductType -notin @(2, 3)) {
-        throw "Unsupported Windows image: edition=$edition, build=$($os.BuildNumber), productType=$($os.ProductType). Only Windows Server 2022 Standard/Datacenter build 20348 is supported."
+    $expectedBuild = if ($script:WindowsServerVersion -eq '2025') { '26100' } else { '20348' }
+    if ($os.BuildNumber -ne $expectedBuild -or $os.ProductType -notin @(2, 3)) {
+        throw "Unsupported Windows image: edition=$edition, build=$($os.BuildNumber), productType=$($os.ProductType). Require the selected Windows Server build $expectedBuild."
+    }
+    if ($script:WindowsLicenseMode -eq 'evaluation') {
+        if ($edition -notin @('ServerStandardEval', 'ServerDatacenterEval')) {
+            throw "Unsupported Windows image edition '$edition': evaluation mode requires Evaluation media."
+        }
+        return [pscustomobject]@{
+            Edition = $edition; Build = [string]$os.BuildNumber
+            ProductKey = ''; PartialProductKey = ''; Channel = 'TIMEBASED_EVAL'
+            KmsEndpoint = ''
+        }
+    }
+    if ($os.BuildNumber -ne '20348') {
+        throw 'Unsupported Windows image: Azure KMS provisioning is only supported for the existing Server 2022 Jumpstart images; Server 2025 requires Evaluation media.'
     }
     # Published client keys select the edition; they are not licenses or secrets.
     # https://learn.microsoft.com/windows-server/get-started/kms-client-activation-keys
@@ -258,6 +284,7 @@ function New-WindowsServer2022Unattend {
     param([Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$AdministratorPassword)
     $configuration = Get-WindowsServer2022KmsConfiguration
     $escapedPassword = [Security.SecurityElement]::Escape($AdministratorPassword)
+    $keyXml = if ($configuration.ProductKey) { "<ProductKey>$($configuration.ProductKey)</ProductKey>" } else { '' }
     # Specialize ProductKey prevents the interactive product-key OOBE page.
     # https://learn.microsoft.com/windows-hardware/customize/desktop/unattend/microsoft-windows-shell-setup-productkey
     @"
@@ -266,7 +293,7 @@ function New-WindowsServer2022Unattend {
   <settings pass="specialize">
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
       <ComputerName>*</ComputerName>
-      <ProductKey>$($configuration.ProductKey)</ProductKey>
+      $keyXml
     </component>
   </settings>
   <settings pass="oobeSystem">
@@ -298,11 +325,16 @@ function New-WindowsServer2022Unattend {
 }
 
 function Invoke-WindowsLicenseCommand {
-    param([Parameter(Mandatory)][string[]]$Arguments)
+    param([Parameter(Mandatory)][string[]]$Arguments, [switch]$AllowActivationInProgress)
     $cscript = (Get-Command cscript.exe -CommandType Application -ErrorAction Stop).Source
     $output = & $cscript //NoLogo "$env:SystemRoot\System32\slmgr.vbs" @Arguments 2>&1
     $exitCode = $LASTEXITCODE
     $text = $output -join [Environment]::NewLine
+    if ($AllowActivationInProgress -and $Arguments.Count -eq 1 -and $Arguments[0] -eq '/ato' -and
+        $exitCode -eq -1073422296 -and $text -match '(?i)\b0xC004E028\b') {
+        Write-Host $text
+        return $true
+    }
     if ($exitCode -ne 0 -or $text -match '(?i)\b0x[89a-f][0-9a-f]{7}\b') {
         throw "Windows licensing command $($Arguments[0]) failed (exit $exitCode): $text"
     }
@@ -322,6 +354,34 @@ function Enable-WindowsServer2022AzureKms {
     }
     $products = @(Get-InstalledWindowsProduct)
     if ($products.Count -gt 1) { throw 'Multiple installed Windows licensing products; refusing ambiguous activation.' }
+    if ($configuration.Channel -eq 'TIMEBASED_EVAL') {
+        if ($products.Count -ne 1 -or $products[0].Description -notmatch '\bTIMEBASED_EVAL channel\b') {
+            throw 'Evaluation activation requires exactly one installed TIMEBASED_EVAL Windows product. No key or edition conversion will be attempted.'
+        }
+        if ($products[0].LicenseStatus -ne 1) {
+            $activationInProgress = Invoke-WindowsLicenseCommand -Arguments @('/ato') -AllowActivationInProgress
+            $activationDeadline = (Get-Date).AddSeconds(300)
+            do {
+                $products = @(Get-InstalledWindowsProduct)
+                if (-not $activationInProgress -or $products.Count -ne 1 -or
+                    $products[0].Description -notmatch '\bTIMEBASED_EVAL channel\b' -or
+                    ($products[0].LicenseStatus -eq 1 -and $products[0].GracePeriodRemaining -gt 0)) { break }
+                if ((Get-Date) -ge $activationDeadline) {
+                    throw 'Windows Evaluation activation was already in progress (0xC004E028) but did not reach a licensed state within 300 seconds. Preserve the guest and inspect licensing; no competing activation or reboot was started.'
+                }
+                Write-Host "$([DateTime]::UtcNow.ToString('o')) Waiting for the existing Windows Evaluation activation; no competing /ato or reboot."
+                Start-Sleep -Seconds 10
+            } while ($true)
+        }
+        if ($products.Count -ne 1 -or $products[0].LicenseStatus -ne 1 -or
+            $products[0].Description -notmatch '\bTIMEBASED_EVAL channel\b' -or
+            $products[0].GracePeriodRemaining -le 0) {
+            throw 'Windows Evaluation activation postcondition failed: require LicenseStatus=1, TIMEBASED_EVAL, and positive remaining evaluation time. No rearm or licensing bypass is permitted.'
+        }
+        $expires = [DateTime]::UtcNow.AddMinutes([double]$products[0].GracePeriodRemaining)
+        Write-Host "Windows $($configuration.Edition) evaluation activation verified; remaining-time expiry estimate: $($expires.ToString('o')). This is a time-limited lab."
+        return
+    }
     if ($products.Count -eq 1 -and (Test-ExpectedKmsProduct $products[0]) -and $products[0].LicenseStatus -eq 1) {
         Write-Host "Windows $($configuration.Edition) is already licensed with the expected KMS client key."
         return
@@ -342,6 +402,8 @@ function Enable-WindowsServer2022AzureKms {
 
 function Get-WindowsProvisioningHelperScript {
     @"
+`$script:WindowsLicenseMode = '$WindowsLicenseMode'
+`$script:WindowsServerVersion = '$WindowsServerVersion'
 function Get-WindowsServer2022KmsConfiguration {
 ${function:Get-WindowsServer2022KmsConfiguration}
 }
@@ -414,8 +476,12 @@ function Get-GeneralizedParentCacheState {
     if (Test-Path -LiteralPath $markerPath) {
         try { $marker = Get-Content -LiteralPath $markerPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
         catch { throw "Legacy or unreadable generalized-parent marker $markerPath. $recovery" }
-        if ($marker.Version -ne 'windows-server-2022-gvlk-v1' -or $marker.Build -ne '20348' -or
-            $marker.Edition -notin @('ServerStandard', 'ServerDatacenter') -or -not $marker.CompletedUtc -or
+        $expectedVersion = if ($WindowsServerVersion -eq '2025') { 'windows-server-2025-eval-v1' }
+            elseif ($WindowsLicenseMode -eq 'evaluation') { 'windows-server-2022-eval-v1' } else { 'windows-server-2022-gvlk-v1' }
+        $expectedBuild = if ($WindowsServerVersion -eq '2025') { '26100' } else { '20348' }
+        $expectedEditions = if ($WindowsLicenseMode -eq 'evaluation') { @('ServerStandardEval', 'ServerDatacenterEval') } else { @('ServerStandard', 'ServerDatacenter') }
+        if ($marker.Version -ne $expectedVersion -or $marker.Build -ne $expectedBuild -or
+            $marker.Edition -notin $expectedEditions -or -not $marker.CompletedUtc -or
             $marker.SourceVhd -ne [IO.Path]::GetFullPath($SourceVhd) -or -not (Test-Path -LiteralPath $ParentVhd)) {
             throw "Stale or incompatible generalized-parent cache $ParentVhd. $recovery"
         }
@@ -471,6 +537,9 @@ function New-GeneralizedParent {
     Set-VMFirmware -VMName $stagingVmName -EnableSecureBoot Off
     Start-VM -Name $stagingVmName
     Wait-VMHeartbeat -VMName $stagingVmName
+    if ($ImageMode -eq 'installation-media') {
+        Wait-WindowsGuestOobe -VMName $stagingVmName
+    }
 
     Write-Host "Generalizing $TemplateName with Windows Sysprep."
     $templateConfiguration = Invoke-WindowsGuest `
@@ -578,15 +647,18 @@ if ($result.ExitCode -ne 0 -or $result.ImageState -ne 'IMAGE_STATE_GENERALIZE_RE
         }
 
     Wait-TemplateGeneralization -VMName $stagingVmName -VhdPath $generalizedVhd
+    $expectedEditions = if ($WindowsLicenseMode -eq 'evaluation') { @('ServerStandardEval', 'ServerDatacenterEval') } else { @('ServerStandard', 'ServerDatacenter') }
+    $expectedBuild = if ($WindowsServerVersion -eq '2025') { '26100' } else { '20348' }
     if (-not $templateConfiguration -or @($templateConfiguration).Count -ne 1 -or
-        $templateConfiguration.Build -ne '20348' -or
-        $templateConfiguration.Edition -notin @('ServerStandard', 'ServerDatacenter')) {
+        $templateConfiguration.Build -ne $expectedBuild -or
+        $templateConfiguration.Edition -notin $expectedEditions) {
         throw 'Template edition/build evidence is missing or invalid. Preserve the template; no versioned ready marker will be written.'
     }
     Remove-VM -Name $stagingVmName -Force
     Set-ItemProperty -Path $generalizedVhd -Name IsReadOnly -Value $true
     @{
-        Version = 'windows-server-2022-gvlk-v1'
+        Version = $(if ($WindowsServerVersion -eq '2025') { 'windows-server-2025-eval-v1' }
+            elseif ($WindowsLicenseMode -eq 'evaluation') { 'windows-server-2022-eval-v1' } else { 'windows-server-2022-gvlk-v1' })
         SourceVhd = [IO.Path]::GetFullPath($SourceVhd)
         Edition = $templateConfiguration.Edition
         Build = $templateConfiguration.Build
@@ -681,11 +753,28 @@ function New-NestedVM {
     }
 }
 
+$imageLock = $null
 try {
+    if (($ImageMode -eq 'installation-media') -ne ($WindowsLicenseMode -eq 'evaluation')) {
+        throw 'installation-media requires evaluation licensing; jumpstart requires the existing azure-kms path.'
+    }
+    if ($WindowsServerVersion -eq '2025' -and $ImageMode -ne 'installation-media') {
+        throw 'Windows Server 2025 guests require installation-media; the existing Jumpstart images remain Server 2022.'
+    }
+    $ubuntuBuild = $null
+    if ($ImageMode -eq 'installation-media') {
+        $ImageStage = '40'
+        $imageLock = [IO.File]::Open('F:\ArcJumpstart\Images\InstallationMedia\build.lock', 'OpenOrCreate', 'ReadWrite', 'None')
+        if ($IncludeLinux -eq 'true') {
+            $ubuntuBuild = Start-UbuntuImageBuild -Sha256 $UbuntuIsoSha256 -PublicKey $LinuxSshPublicKey
+        }
+    }
+    $templateName = if ($ImageMode -eq 'installation-media') { "Windows-Server-$WindowsServerVersion-Eval" } else { 'Windows-Server-2022' }
     $generalizedWindowsImage = New-GeneralizedParent `
-        -TemplateName 'Windows-Server-2022' `
+        -TemplateName $templateName `
         -SourceVhd (Join-Path $imageRoot $WindowsImageFileName) `
         -MemoryGB $DcMemoryGB
+    if ($ubuntuBuild) { Complete-UbuntuImageBuild -Build $ubuntuBuild }
     $definitions = @(
         @{
             Name = 'JS-DC-01'
@@ -738,7 +827,21 @@ try {
         }
     )
 
-    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage40] Creating and starting all nested guests before per-guest readiness checks."
+    if ($IncludeLinux -eq 'false') {
+        $definitions = @($definitions | Where-Object { -not $_.Linux })
+        Write-ImagePhase 'Linux explicitly excluded; preparing only Windows guests.'
+    }
+    if ($IncludeAppliance -eq 'true') {
+        $definitions += @{
+            Name = 'JS-MIGRATE-01'
+            Parent = $generalizedWindowsImage
+            Memory = 16
+            Processors = 8
+            Linux = $false
+        }
+        Write-ImagePhase 'Preparing JS-MIGRATE-01 as an unused workgroup guest; no appliance, SQL, domain join, or Arc onboarding.'
+    }
+    Write-Host "$([DateTime]::UtcNow.ToString('o')) [stage40] Creating and starting all selected nested guests before per-guest readiness checks."
     foreach ($definition in $definitions) {
         New-NestedVM `
             -Name $definition.Name `
@@ -759,6 +862,15 @@ try {
                 Enable-WindowsServer2022AzureKms
             }
             Invoke-WindowsGuest -VMName $definition.Name -ScriptBlock ${function:Enable-WindowsGuestEnhancedSession}
+            if ($ImageMode -eq 'installation-media') {
+                Invoke-WindowsGuest -VMName $definition.Name -ScriptBlock {
+                    Enable-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction Stop
+                    if (-not (Get-NetFirewallRule -Name 'RemoteDesktop-UserMode-In-TCP' -ErrorAction Stop |
+                        Where-Object Enabled -eq True)) {
+                        throw 'Fresh Windows guest did not enable the expected RDP firewall rule.'
+                    }
+                }
+            }
             $restartNeeded = Invoke-WindowsGuest -VMName $definition.Name -ArgumentList $definition.Name -ScriptBlock {
                 param($DesiredName)
                 if ($env:COMPUTERNAME -ne $DesiredName) {
@@ -811,5 +923,6 @@ try {
         Format-Table -AutoSize
 }
 finally {
+    if ($imageLock) { $imageLock.Dispose() }
     Stop-Transcript
 }

@@ -1,0 +1,55 @@
+<!doctype html>
+<!--
+THESIS: Evidence, not optimistic percentages. A build ledger separates current execution from recovery history.
+OWN-WORLD: App-native system typography, slate surfaces, blue activity and explicit semantic state labels.
+STORY: Understand the active gate, inspect what passed, then see what is still unproven.
+FIRST VIEWPORT: Lab identity and freshness above a pipeline ledger and its selected execution evidence.
+FORM: Read-only operational workspace; responsive ledger, workload matrix, and chronological recovery log.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Arc Jumpstart build</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header>
+    <div><h1>Arc Jumpstart <span>Build ledger</span></h1><p id="lab">Waiting for lab evidence</p></div>
+    <span class="readonly">Read-only</span>
+  </header>
+  <div id="error" role="alert" hidden></div>
+  <main>
+    <section class="summary" aria-labelledby="headline">
+      <div class="summary-text"><h2 id="headline">Connecting to build evidence…</h2><p id="explanation">No build state is assumed until evidence arrives.</p></div>
+      <div class="freshness"><span id="connection">Connecting</span><p id="freshness">No snapshot received</p></div>
+    </section>
+    <div class="workspace">
+      <section aria-labelledby="pipeline-heading">
+        <div class="section-heading"><h2 id="pipeline-heading">Build pipeline</h2><span id="verified"></span></div>
+        <nav id="pipeline" aria-label="Deployment stages"></nav>
+        <p class="footnote">Networking and image preparation can overlap. Bastion runs independently and does not gate the build.</p>
+      </section>
+      <section class="evidence" aria-labelledby="detail-heading">
+        <div class="section-heading"><h2 id="detail-heading">Execution evidence</h2><span id="detail-status"></span></div>
+        <h3 id="detail-title">Select a stage</h3>
+        <p id="detail-description"></p>
+        <dl id="detail-times"></dl>
+        <details id="output-details"><summary>Inspect redacted output</summary><pre id="output">No host output has been recorded.</pre></details>
+        <div class="boundary"><h3>Prepared is not connected</h3><p>Arc launchers are staged by the build. Connecting Arc, collecting assessments and registering the Migrate appliance remain separate, user-authenticated steps.</p></div>
+      </section>
+    </div>
+    <section class="machines" aria-labelledby="machines-heading">
+      <div class="section-heading"><h2 id="machines-heading">Windows guest readiness</h2><span>Verified gates, not VM power state</span></div>
+      <div class="table-scroll"><table><thead><tr><th scope="col">Guest / role</th><th scope="col">Setup</th><th scope="col">Activation</th><th scope="col">SQL / SSAS</th><th scope="col">Domain</th><th scope="col">AG</th><th scope="col">Arc launcher</th></tr></thead><tbody id="guests"></tbody></table></div>
+      <p class="footnote">“Unverified” means no passing gate has been recorded, not that the guest failed. Template update baseline: not captured by these deployment receipts.</p>
+    </section>
+    <section class="history" aria-labelledby="history-heading">
+      <div class="section-heading"><h2 id="history-heading">Execution & recovery history</h2><button id="history-filter" aria-pressed="false">Show failures only</button></div>
+      <ol id="events"></ol>
+    </section>
+    <footer>Watching a local, redacted evidence file. This page never calls Azure, reads credentials, or starts deployment actions. Earlier failures are retained only when captured by the evidence writer.</footer>
+  </main>
+</body>
+</html>

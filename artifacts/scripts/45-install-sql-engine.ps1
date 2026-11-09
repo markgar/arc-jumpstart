@@ -6,6 +6,9 @@ Run as the guest's local Administrator, keeping the session open until return.
 Requires the verified SQL Server 2025 Enterprise Developer ISO staged locally.
 Does not install tools, onboard Arc, schedule tasks, or reboot the guest.
 Returns JSON by default; -PassThru returns a structured result for stage 45.
+Database Engines require the shared -SqlSaPassword SecureString, use mixed mode,
+and verify encrypted sa access alongside the existing Windows administrator.
+SSAS-only installation does not use this credential.
 Running this script accepts the development/test-only SQL Server license terms.
 https://learn.microsoft.com/sql/database-engine/install-windows/install-sql-server-from-the-command-prompt
 https://learn.microsoft.com/powershell/module/microsoft.powershell.management/start-process#notes
@@ -13,6 +16,7 @@ https://learn.microsoft.com/powershell/module/microsoft.powershell.management/st
 [CmdletBinding()]
 param(
     [string]$IsoPath = 'C:\ArcJumpstart\Sql2025\SQLServer2025-x64-ENU-EntDev.iso',
+    [securestring]$SqlSaPassword,
     [switch]$VerifyOnly,
     [switch]$PassThru
 )
@@ -29,7 +33,59 @@ if ($identity.Name -ine "$env:COMPUTERNAME\Administrator" -or
     throw 'An elevated session as the guest local Administrator is required.'
 }
 
+function Get-LabSqlMediaProfile {
+    param([string]$Path = 'C:\ArcJumpstart\Sql2025\edition.json')
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return [pscustomobject]@{
+            Edition = 'EnterpriseDeveloper'
+            Name = 'SQLServer2025-x64-ENU-EntDev.iso'
+            Size = 1265688576
+            Sha256 = 'f78f869d44e8c2cbf93be16ce6ea52dd811636f046ded29e7a74dd1352134851'
+        }
+    }
+    $profile = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -ErrorAction Stop
+    if ($profile.Version -ne 1 -or $profile.Edition -cnotin @('Standard', 'Enterprise') -or
+        $profile.Sha256 -cnotmatch '^[a-f0-9]{64}$' -or
+        $profile.Name -cne "SQL2025-$($profile.Edition)-$($profile.Sha256).iso" -or
+        $profile.Size -lt 1GB -or $profile.Size -gt 25GB) {
+        throw 'Invalid licensed SQL edition profile. Never infer the edition from EngineEdition alone.'
+    }
+    return $profile
+}
+
+function Get-LabSqlEditionContract {
+    param([string]$Edition)
+    switch -CaseSensitive ($Edition) {
+        'EnterpriseDeveloper' { @{ EditionIds = @(-2117995310); EngineEdition = 3; AnalysisPattern = '^(Enterprise )?Developer( Edition)?( \(64-bit\))?$' } }
+        'Standard' { @{ EditionIds = @(-1534726760); EngineEdition = 2; AnalysisPattern = '^Standard( Edition)?( \(64-bit\))?$' } }
+        'Enterprise' { @{ EditionIds = @(1804890536, 1872460670); EngineEdition = 3; AnalysisPattern = '^Enterprise( Edition)?(: Core-based Licensing)?( \(64-bit\))?$' } }
+        default { throw "Unsupported SQL edition profile: $Edition" }
+    }
+}
+
+function Get-SqlSaPasswordText {
+    if (-not $SqlSaPassword) { throw 'Supply the shared SQL_SA_PASSWORD as -SqlSaPassword (SecureString) for Database Engine installation or verification.' }
+    $password = ([pscredential]::new('sa', $SqlSaPassword)).GetNetworkCredential().Password
+    if ($password -cnotmatch '^[A-Za-z0-9!@#$%&*+=?:.,_-]{32,128}$' -or
+        $password -cnotmatch '[a-z]' -or $password -cnotmatch '[A-Z]' -or
+        $password -notmatch '[0-9]' -or $password -notmatch '[!@#$%&*+=?:.,_-]') {
+        throw 'The shared sa password must be 32-128 setup-safe characters with uppercase, lowercase, digits and punctuation.'
+    }
+    $password
+}
+
+function Protect-SqlPasswordText {
+    param([string]$Text)
+    if ($SqlSaPassword) {
+        $password = ([pscredential]::new('sa', $SqlSaPassword)).GetNetworkCredential().Password
+        if ($password) { return $Text.Replace($password, '[REDACTED]') }
+    }
+    $Text
+}
+
 function Test-InstalledEngine {
+    $profile = Get-LabSqlMediaProfile
+    $contract = Get-LabSqlEditionContract $profile.Edition
     Add-Type -AssemblyName System.Data
     # Trust the lab's local self-signed certificate for this localhost-only probe.
     $connection = [System.Data.SqlClient.SqlConnection]::new(
@@ -46,6 +102,7 @@ SELECT CONVERT(nvarchar(128),SERVERPROPERTY('Edition')) AS Edition,
        CONVERT(int,SERVERPROPERTY('EngineEdition')) AS EngineEdition,
        CONVERT(int,SERVERPROPERTY('IsIntegratedSecurityOnly')) AS WindowsOnly,
        IS_SRVROLEMEMBER('sysadmin') AS IsSysadmin,
+       CASE WHEN EXISTS (SELECT 1 FROM sys.server_principals WHERE principal_id=1 AND name=N'sa' AND is_disabled=0) THEN 1 ELSE 0 END AS SaEnabled,
        CONVERT(nvarchar(128),SERVERPROPERTY('ServerName')) AS ServerName,
        1 AS Probe;
 "@
@@ -53,17 +110,32 @@ SELECT CONVERT(nvarchar(128),SERVERPROPERTY('Edition')) AS Edition,
         $reader = $command.ExecuteReader()
         try { $table.Load($reader) } finally { $reader.Dispose() }
         $row = $table.Rows[0]
-        if ($row.ProductVersion -notmatch '^17\.' -or $row.EditionId -ne -2117995310 -or $row.EngineEdition -ne 3 -or
-            $row.WindowsOnly -ne 1 -or $row.IsSysadmin -ne 1 -or
+        if ($row.ProductVersion -notmatch '^17\.' -or $row.EditionId -notin $contract.EditionIds -or $row.EngineEdition -ne $contract.EngineEdition -or
+            $row.WindowsOnly -ne 0 -or $row.IsSysadmin -ne 1 -or $row.SaEnabled -ne 1 -or
             $row.ServerName -ine $env:COMPUTERNAME -or $row.Probe -ne 1) {
-            throw 'SQL must be 2025 Enterprise Developer, Windows-only, with local Administrator sysadmin and the correct server name.'
+            throw "SQL must be 2025 $($profile.Edition), mixed mode, with sa enabled, local Administrator sysadmin and the correct server name. Existing engines are never converted or replaced automatically."
         }
+        $builder = [System.Data.SqlClient.SqlConnectionStringBuilder]::new(
+            'Server=tcp:localhost,1433;Database=master;User ID=sa;Integrated Security=false;Encrypt=true;TrustServerCertificate=true;Connect Timeout=15;Pooling=false;ConnectRetryCount=0')
+        $builder.set_Password((Get-SqlSaPasswordText))
+        $saConnection = [System.Data.SqlClient.SqlConnection]::new($builder.ConnectionString)
+        $builder.Clear()
+        try {
+            $saConnection.Open()
+            $saQuery = $saConnection.CreateCommand()
+            $saQuery.CommandTimeout = 15
+            $saQuery.CommandText = "SET NOCOUNT ON; IF ORIGINAL_LOGIN() <> N'sa' OR ISNULL(IS_SRVROLEMEMBER(N'sysadmin'),0) <> 1 THROW 51000, 'sa sysadmin required', 1; SELECT 1;"
+            if ($saQuery.ExecuteScalar() -ne 1) { throw 'Encrypted sa sysadmin query did not succeed.' }
+        }
+        finally { $saConnection.Dispose() }
         [pscustomobject]@{
             Edition = $row.Edition
             ProductVersion = $row.ProductVersion
             EditionId = $row.EditionId
             WindowsOnly = $row.WindowsOnly
             IsSysadmin = $row.IsSysadmin
+            SaEnabled = $row.SaEnabled
+            SaAuthenticated = $true
             ServerName = $row.ServerName
             Probe = $row.Probe
         }
@@ -90,13 +162,15 @@ function Get-InstalledFeatureNames {
 }
 
 function Test-InstalledAnalysisServices {
+    $profile = Get-LabSqlMediaProfile
+    $contract = Get-LabSqlEditionContract $profile.Edition
     $service = Get-Service -Name MSSQLServerOLAPService -ErrorAction Stop
     $root = "$env:ProgramFiles\Microsoft SQL Server\MSAS17.MSSQLSERVER\OLAP"
     $binary = Get-Item "$root\bin\msmdsrv.exe" -ErrorAction Stop
     $setup = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\MSAS17.MSSQLSERVER\Setup' -ErrorAction Stop
     [xml]$configuration = Get-Content "$root\Config\msmdsrv.ini" -Raw -ErrorAction Stop
-    if ($setup.Edition -notmatch '^(Enterprise )?Developer( Edition)?( \(64-bit\))?$') {
-        throw "SSAS must be Enterprise Developer, not '$($setup.Edition)'. No automatic replacement is permitted."
+    if ($setup.Edition -notmatch $contract.AnalysisPattern) {
+        throw "SSAS must be $($profile.Edition), not '$($setup.Edition)'. No automatic replacement is permitted."
     }
     if ($service.Status -ne 'Running' -or $binary.VersionInfo.ProductMajorPart -ne 17 -or
         [string]$configuration.ConfigurationSettings.DeploymentMode -ne '2') {
@@ -120,7 +194,9 @@ function Get-SqlSetupArguments {
     $arguments = '/Q /ACTION=Install /FEATURES=' + ($Features -join ',') +
         ' /INSTANCENAME=MSSQLSERVER /IACCEPTSQLSERVERLICENSETERMS /SUPPRESSPRIVACYSTATEMENTNOTICE /INDICATEPROGRESS /UPDATEENABLED=False /USEMICROSOFTUPDATE=False'
     if ('SQLENGINE' -in $Features) {
+        $password = Get-SqlSaPasswordText
         $arguments += ' /SQLSVCSTARTUPTYPE=Automatic /AGTSVCSTARTUPTYPE=Automatic /TCPENABLED=1 /NPENABLED=0 /SQLSVCACCOUNT="NT SERVICE\MSSQLSERVER" /AGTSVCACCOUNT="NT SERVICE\SQLSERVERAGENT" /SQLSYSADMINACCOUNTS="' + $env:COMPUTERNAME + '\Administrator"'
+        $arguments += ' /SECURITYMODE=SQL /SAPWD="' + $password + '"'
     }
     if ('AS' -in $Features) {
         $arguments += ' /ASSERVERMODE=TABULAR /ASSVCSTARTUPTYPE=Automatic /ASSVCACCOUNT="NT SERVICE\MSSQLServerOLAPService" /ASSYSADMINACCOUNTS="' + $env:COMPUTERNAME + '\Administrator" "BUILTIN\Administrators"'
@@ -182,9 +258,13 @@ try {
             'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')) {
             if (Test-Path $key) { throw "Windows requires a reboot before SQL Setup: $key" }
         }
-        if ((Get-Item $IsoPath).Length -ne 1265688576 -or
-            (Get-FileHash $IsoPath -Algorithm SHA256).Hash -ine 'f78f869d44e8c2cbf93be16ce6ea52dd811636f046ded29e7a74dd1352134851') {
-            throw 'ISO does not match the verified SQL Server 2025 Enterprise Developer release.'
+        $profile = Get-LabSqlMediaProfile
+        if ($profile.Edition -ne 'EnterpriseDeveloper') {
+            $IsoPath = Join-Path $work $profile.Name
+        }
+        if ((Get-Item $IsoPath).Length -ne $profile.Size -or
+            (Get-FileHash $IsoPath -Algorithm SHA256).Hash -ine $profile.Sha256) {
+            throw 'ISO does not match the verified SQL Server 2025 media profile.'
         }
         if (-not (Get-DiskImage -ImagePath $IsoPath).Attached) {
             Mount-DiskImage -ImagePath $IsoPath -StorageType ISO -Access ReadOnly | Out-Null
@@ -196,6 +276,17 @@ try {
         $signature = Get-AuthenticodeSignature $setup
         if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation(?:,|$)') {
             throw 'SQL Setup must have a valid Microsoft signature.'
+        }
+        if ($profile.Edition -ne 'EnterpriseDeveloper') {
+            if ((Get-Item -LiteralPath $setup).VersionInfo.ProductMajorPart -ne 17) {
+                throw 'Licensed SQL media must be SQL Server 2025 before any installer is started.'
+            }
+            $defaults = @(Get-ChildItem "$($volumes[0].DriveLetter):\" -Filter DefaultSetup.ini -File -Recurse)
+            if ($defaults.Count -ne 1 -or -not [regex]::IsMatch(
+                    (Get-Content -LiteralPath $defaults[0].FullName -Raw),
+                    '(?im)^\s*PID\s*=\s*["\s]*[A-Z0-9]{5}(?:-[A-Z0-9]{5}){4}')) {
+                throw 'Licensed mode requires authorized pre-keyed Standard/Enterprise media. No product key is requested, logged, or passed on a command line.'
+            }
         }
         $arguments = Get-SqlSetupArguments $missing
         Write-Host "Starting synchronous SQL Setup on $env:COMPUTERNAME. Logs: $logs"
@@ -217,12 +308,13 @@ try {
 }
 catch {
     $result.Status = 'Failed'
-    $result.Error = $_.Exception.Message
+    $result.Error = Protect-SqlPasswordText $_.Exception.Message
     $result['ExceptionType'] = $_.Exception.GetType().FullName
     $result['ScriptStackTrace'] = $_.ScriptStackTrace
-    throw
+    throw (Protect-SqlPasswordText $_.Exception.Message)
 }
 finally {
+    $arguments = $null
     try { if ($mountedHere) { Dismount-DiskImage -ImagePath $IsoPath | Out-Null } }
     catch { Write-Warning "Could not dismount SQL media: $($_.Exception.Message)" -WarningAction Continue }
     try { $result | ConvertTo-Json -Depth 4 | Set-Content "$logs\result.json" -Encoding UTF8 }

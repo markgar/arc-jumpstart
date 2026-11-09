@@ -50,7 +50,9 @@ function Get-EmbeddedScript {
 }
 $ast = Parse-Script (Get-Content $scriptPath -Raw)
 $engineAst = Parse-Script (Get-Content $enginePath -Raw)
-foreach ($name in @('Get-LabSqlFeatures', 'Get-InstalledFeatureNames', 'Get-SqlSetupArguments', 'Test-InstalledAnalysisServices')) {
+foreach ($name in @('Get-LabSqlMediaProfile', 'Get-LabSqlEditionContract', 'Get-LabSqlFeatures',
+    'Get-InstalledFeatureNames', 'Get-SqlSetupArguments', 'Test-InstalledAnalysisServices',
+    'Get-SqlSaPasswordText', 'Protect-SqlPasswordText')) {
     . ([scriptblock]::Create((Get-FunctionText $engineAst $name)))
 }
 $guestLibrary = Get-EmbeddedScript guestLibrary
@@ -69,11 +71,15 @@ foreach ($name in @('Get-BudgetSeconds', 'Wait-BoundedJob', 'Complete-SqlGuest',
 $script:stageDeadlineUtc = [DateTime]::UtcNow.AddMinutes(235)
 $script:phaseDeadlineUtc = $null
 $script:guestDeadlineUtc = $null
+$testSaPassword = 'TestsOnly!Aa1234567890' + ('x' * 16)
+$SqlSaPassword = ConvertTo-SecureString $testSaPassword -AsPlainText -Force
+$sqlCredential = [pscredential]::new('sa', $SqlSaPassword)
 
 # The sole engine implementation is embedded by Bicep, not copied into a runner.
 $bicep = Get-Content (Join-Path $PSScriptRoot '../infra/stages/45-sql-install/main.bicep') -Raw
 foreach ($text in @("name: 'EngineScriptBase64'", "base64(loadTextContent('../../../artifacts/scripts/45-install-sql-engine.ps1'))",
-    'timeoutInSeconds: 14400', 'protectedScriptParameters:')) {
+    'timeoutInSeconds: 14400', 'protectedScriptParameters:', 'param sqlSaPassword string',
+    "name: 'SqlSaPassword'", 'value: sqlSaPassword')) {
     if (-not $bicep.Contains($text)) { throw "Missing stage wiring: $text" }
 }
 if (-not $guestInstall.Contains('& "$work\45-install-sql-engine.ps1" -PassThru') -or
@@ -101,8 +107,9 @@ if (-not (Get-FunctionText $guestAst Get-SqlCmdPath).Contains('Client SDK\ODBC\1
 $pathText = Get-FunctionText $guestAst Set-SqlCmdMachinePath
 if (-not $pathText.Contains("SetEnvironmentVariable('Path', `$newPath, 'Machine')") -or
     -not $pathText.Contains('$env:Path = $newPath')) { throw 'PATH must be refreshed for both machine and current Direct session.' }
-foreach ($text in @('Get-SqlSetupArguments $missing', '/SQLSYSADMINACCOUNTS=', '-Wait -PassThru', '$row.EditionId -ne -2117995310',
-    '$row.EngineEdition -ne 3', '$row.WindowsOnly -ne 1', '$row.IsSysadmin -ne 1')) {
+foreach ($text in @('Get-SqlSetupArguments $missing', '/SQLSYSADMINACCOUNTS=', '-Wait -PassThru', '$row.EditionId -notin $contract.EditionIds',
+    '$row.EngineEdition -ne $contract.EngineEdition', '$row.WindowsOnly -ne 0', '$row.IsSysadmin -ne 1',
+    '$row.SaEnabled -ne 1', '$builder.set_Password((Get-SqlSaPasswordText))', '$saConnection.Open()')) {
     if (-not $engineAst.Extent.Text.Contains($text)) { throw "Missing proven engine contract: $text" }
 }
 Assert-EngineArguments '/Q /FEATURES=SQLENGINE'
@@ -114,9 +121,37 @@ foreach ($vm in @('JS-SQL-01', 'JS-SQL-AG-01', 'JS-SQL-AG-02', 'JS-RETAIL-01', '
     $features = @(Get-LabSqlFeatures $vm)
     $arguments = Get-SqlSetupArguments $features
     Assert-EngineArguments $arguments ($features -join ',')
+    if ('SQLENGINE' -in $features -and
+        ($arguments -notmatch '/SECURITYMODE=SQL' -or -not $arguments.Contains('/SAPWD="' + $testSaPassword + '"'))) {
+        throw 'Every engine must receive mixed mode and the same configured sa password.'
+    }
     if ('AS' -in $features -and $arguments -notmatch '/ASSERVERMODE=TABULAR') { throw 'SSAS must use Tabular mode.' }
-    if ($vm -eq 'JS-INSIGHT-01' -and $arguments -match '/SQLSVC|/AGTSVC|/SQLSYSADMIN') {
+    if ($vm -eq 'JS-INSIGHT-01' -and $arguments -match '/SQLSVC|/AGTSVC|/SQLSYSADMIN|/SECURITYMODE|/SAPWD') {
         throw 'AS-only setup must not contain engine service or admin arguments.'
+    }
+    & {
+        $SqlSaPassword = $null
+        Assert-Throws { Get-SqlSetupArguments @('SQLENGINE') } 'Supply the shared SQL_SA_PASSWORD'
+        Assert-EngineArguments (Get-SqlSetupArguments @('AS')) 'AS'
+        foreach ($invalid in @('Short1!', ('a' * 32), ('A' * 32), ('1' * 32),
+            ($testSaPassword + '"'), ($testSaPassword + ' '), ($testSaPassword + '\'), ('Aa1!' + ('x' * 125)))) {
+            $SqlSaPassword = ConvertTo-SecureString $invalid -AsPlainText -Force
+            Assert-Throws { Get-SqlSetupArguments @('SQLENGINE') } '32-128 setup-safe'
+        }
+    }
+    Assert-Equal (Protect-SqlPasswordText "secret $testSaPassword") 'secret [REDACTED]' 'Engine failures redact sa'
+    & {
+        $SqlSaPassword = $testSaPassword
+        $NestedWindowsPassword = 'NestedTestOnly!'
+        $logFile = 'unused'
+        function Add-Content { param($Path, $Value) $script:redactedStageLine = $Value }
+        function Write-Host { param($Object) }
+        Write-StageLog "sa=$SqlSaPassword windows=$NestedWindowsPassword"
+        if ($script:redactedStageLine.Contains($testSaPassword) -or
+            $script:redactedStageLine.Contains($NestedWindowsPassword) -or
+            -not $script:redactedStageLine.Contains('[REDACTED]')) {
+            throw 'Host stage messages must redact both Windows and shared sa passwords.'
+        }
     }
 }
 Assert-Throws { Get-SqlSetupArguments @('AS', 'AZUREEXTENSION') } 'Only explicit'
@@ -133,7 +168,7 @@ foreach ($flag in @('/AZUREEXTENSION', '/AZURETENANTID=example', '/AZURESUBSCRIP
         $_ -is [Management.Automation.Language.IfStatementAst] -and $_.Extent.Text.Contains('duplicate guest names')
     }
     $selector = [scriptblock]::Create("[CmdletBinding()]`n" + $ast.ParamBlock.Extent.Text + "`n" + $guard.Extent.Text + "`n" + '$VmNames')
-    $inputs = @{ NestedWindowsPassword = 'dummy'; SqlDownloadUrl = 'dummy'; RunId = 'test'; EngineScriptBase64 = 'dummy' }
+    $inputs = @{ NestedWindowsPassword = 'dummy'; SqlSaPassword = $testSaPassword; SqlDownloadUrl = 'dummy'; RunId = 'test'; EngineScriptBase64 = 'dummy' }
     Assert-Equal ((& $selector @inputs) -join ',') 'JS-SQL-01,JS-SQL-AG-01,JS-SQL-AG-02,JS-RETAIL-01,JS-INSIGHT-01' 'Default all five guests'
     Assert-Equal ((& $selector @inputs -VmNames JS-SQL-01) -join ',') 'JS-SQL-01' 'One guest smoke'
     Assert-Equal ((& $selector @inputs -VmNames JS-SQL-AG-02,JS-SQL-01) -join ',') 'JS-SQL-AG-02,JS-SQL-01' 'Preserve order'
@@ -312,7 +347,7 @@ foreach ($flag in @('/AZUREEXTENSION', '/AZURETENANTID=example', '/AZURESUBSCRIP
     $script:asMode = 2
     foreach ($edition in @('Standard Developer Edition', 'Evaluation Edition', 'Enterprise Edition', '')) {
         $script:asEdition = $edition
-        Assert-Throws { & $probe } 'must be Enterprise Developer'
+        Assert-Throws { & $probe } 'must be EnterpriseDeveloper'
     }
 }
 
@@ -702,7 +737,7 @@ if ((Parse-Script $downloadText).Find({
         if ($script:failLogging) { throw 'logging failure' }
         $script:failureLog = $Value
     }
-    $inputs = @{ NestedWindowsPassword = 'secret-value'; SqlDownloadUrl = 'unused'; RunId = 'test'; EngineScriptBase64 = 'unused' }
+    $inputs = @{ NestedWindowsPassword = 'secret-value'; SqlSaPassword = $testSaPassword; SqlDownloadUrl = 'unused'; RunId = 'test'; EngineScriptBase64 = 'unused' }
     $script:failLogging = $false
     Assert-Throws { & $code @inputs } 'original secret-value'
     if ($script:failureLog.Contains('secret-value') -or -not $script:failureLog.Contains('System.InvalidOperationException') -or
@@ -739,6 +774,13 @@ if ($heldText.Contains('Get-SqlPayload')) { throw 'Guest workers must not race o
         Assert-Equal $script:phaseDeadlineUtc $null 'Workers must not inherit the media phase'
         Assert-Equal ($context.Payload -join ',') 'cached.iso' 'Pass immutable shared payload paths'
         if ($context.Credential -isnot [pscredential]) { throw 'Pass credential objects, never plain passwords.' }
+        if ($context.VMName -eq 'JS-INSIGHT-01') {
+            if ($context.SqlCredential) { throw 'Do not send sa credentials to the SSAS-only guest.' }
+        }
+        elseif ($context.SqlCredential -isnot [pscredential] -or
+            $context.SqlCredential.GetNetworkCredential().Password -cne $testSaPassword) {
+            throw 'All four engine workers must receive the same protected sa credential.'
+        }
         if (-not $context.Definitions.Contains('function Complete-SqlGuest')) { throw 'Reuse existing function definitions.' }
         if ($script:launchFailure -eq $context.VMName) { throw 'worker launch failure' }
         $job = [pscustomobject]@{ Name = $context.VMName; State = 'Running' }

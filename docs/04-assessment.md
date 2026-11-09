@@ -70,10 +70,19 @@ activity. Do not treat an old or incomplete assessment as modeling evidence.
 
 Configuration-only sizing works immediately, but a useful assessment should include observed utilization:
 
+Use a project created for **Arc-based discovery**, not just any existing Azure
+Migrate project. Confirm that its scope includes the subscription containing
+the Arc machines and that a recent inventory sync contains their current
+resource IDs. A project created through another discovery workflow is not an
+interchangeable collector destination.
+
 1. Confirm you have **Hybrid Server Resource Administrator** on the Arc-enabled servers.
 2. Install `AzureMigrateCollectorForWindows` or `AzureMigrateCollectorForLinux` from the portal, Azure CLI, or Azure Policy. Configure its `migrateProjects` setting with the Azure Migrate project resource ID and location shown in the project's data-collection instructions.
 3. Verify outbound access to `https://*.migration.windowsazure.com`.
-4. Wait for the extension provisioning status to reach **Succeeded**, then allow 15–30 minutes for the first data to appear.
+4. Wait for the extension provisioning status to reach **Succeeded** and verify
+   a current successful collector upload, then allow 15–30 minutes for the first
+   data to appear. An initial "Service installed successfully" message alone
+   does not establish that the project accepts performance data.
 5. If the exercise includes performance sizing, generate representative load on
    `JumpstartDB` and the Linux VM. Idle utilization is valid for demonstrating
    oversubscription, but it is not representative production sizing data.
@@ -81,6 +90,16 @@ Configuration-only sizing works immediately, but a useful assessment should incl
 7. Recalculate the default assessments and business cases.
 
 The collector extension is not the Azure Migrate appliance. It adds CPU, memory, disk IOPS/throughput, and network history to the existing Arc-based inventory.
+
+On Windows, the collector service is `azm_collector`; its service logs are in
+`C:\ProgramData\GuestConfig\extension_logs\Microsoft.Azure.Migrate.AzureMigrateCollectorForWindows`.
+If collection runs locally but uploads return `Unauthorized`, check the configured
+project ID and location, Arc discovery scope, and latest successful inventory
+sync before changing permissions or reinstalling the extension. Use
+[Sync Arc data](https://learn.microsoft.com/azure/migrate/how-to-manage-arc-resource-sync)
+to refresh stale inventory; this also recalculates the default assessments and
+business cases. Do not silently switch projects or grant broad roles as a
+troubleshooting shortcut.
 
 ## Configure automatic synchronization
 

@@ -6,6 +6,16 @@ For a new build or recovery, use the PowerShell commands in the
 
 ## Evidence and limits
 
+The opt-in `installation-media` path added on 2026-11-04 prepares fresh Windows
+Evaluation and Ubuntu disks from official ISOs. No live Azure acceptance run
+has yet been recorded for it. Earlier results below used the Jumpstart VHDX
+images and do not establish that their preinstalled configuration is unnecessary.
+The next run must prove native Windows setup/generalization/evaluation
+activation, Ubuntu unattended install/SSH/cloud-init, fresh parallel SQL/SSAS
+installation, domain readiness, cluster validation, AG/listener readiness and
+launcher staging without copying state from the old images. Failures must
+become saved provisioning fixes or bounded recovery, not manual image repair.
+
 A fresh agent used baseline `7323b9d` and repository instructions on
 2026-09-16, without the original debugging conversation. Source validation
 passed, including Bicep compilation and the PowerShell stage
@@ -18,6 +28,88 @@ handoff. No stages `20`-`60` had been submitted. There was no diagnosed guest
 failure, but also no proof of completed host initialization, fresh parallel SQL
 installation or end-to-end readiness. This attempt is not a successful clean
 rebuild.
+
+## First Server 2025 attempt: Hotpatch image mismatch
+
+On 2026-11-06 the separate v4 foundation succeeded while referencing an
+explicitly approved existing SQL-media account without redeploying its
+settings or uploads. The user deferred Ubuntu, so this run selects only the
+seven Windows guests, including the unused appliance VM.
+
+Host creation then failed with `InvalidParameter`: the Server 2025 Azure
+Edition image required `PatchMode=AutomaticByPlatform`, conflicting with the
+saved manual patch policy. No host VM was created. The durable correction
+selects ordinary Server 2025 Datacenter Gen2 (`2025-datacenter-g2`), preserving
+manual patching, controlled restarts and the legacy Server 2022 image mapping.
+See the [bounded stage-10 recovery](06-troubleshooting-cleanup.md#server-2025-host-image-rejected-for-patch-mode).
+This first failed attempt is not evidence of a complete Server 2025 build.
+
+## Server 2025 image boot preparation: offline DLL blocked
+
+The same v4 run subsequently completed host initialization, shared SQL-media
+access and stage `20`. Stage `30` verified the Microsoft Evaluation ISO and
+applied Windows successfully, but its image-local BCDBoot exited
+`-1058471934` (`0xC0E90002`, system-integrity policy violation). Host Code
+Integrity event `3077` identified the offline image's `bcrypt.dll` as the
+blocked module loaded by the image-local BCDBoot. Read-only inspection found
+the expected GPT, FAT32 EFI and NTFS Windows partitions, the BCD template and
+boot-manager source, but no EFI BCD store. This was not a download failure or
+evidence that the disk needed repartitioning.
+
+The saved correction uses the installed Server 2025 host's signed BCDBoot
+with its documented `/offline` option, targeting only the new image's Windows
+and EFI volumes. Offline servicing uses the source image's ordinary boot
+files without adopting the host's BootEX selection. No code-integrity policy,
+Secure Boot setting or licensing gate is changed. The Server 2022 legacy
+path remains image-matched.
+
+For this pre-guest failure, once stage `30` is terminal, preserve the
+unpublished disk with `scripts/inspect-image-media.ps1
+-PreserveUnpublishedWindows`, then retry only `scripts/deploy.ps1 30`.
+The helper takes the image-build lock and refuses attached disks, published
+receipts, existing guests and differencing disks. It moves the failed disk
+to a uniquely named backup rather than deleting it; the verified ISO is reused.
+Do not run `all`, rebuild the host or initialize an existing guest's disk.
+The correction still needs a successful live stage `30` and all later
+readiness gates before this run can establish a working Server 2025 lab.
+
+The first retry passed the earlier code-integrity block, but Windows
+PowerShell treated native BCDBoot stderr as a terminating error before the
+tool's final status could be collected. A guarded pre-guest diagnostic allowed
+BCDBoot to finish: it returned success and created BCD despite warnings about
+copying the Microsoft boot manager to a nonexistent destination path.
+Consequently, a zero exit and BCD alone are not sufficient evidence.
+
+The saved builder now creates both EFI output directories first, captures
+native stderr without prematurely stopping the process, and requires BCD,
+`EFI\Microsoft\Boot\bootmgfw.efi` and `EFI\Boot\bootx64.efi` before publishing
+readiness. Launch errors and nonzero native exits still fail explicitly.
+A guarded live boot-initialization diagnostic with those directory and file
+checks passed on the unpublished disk; it created no readiness receipt.
+The Server 2025 receipt version is now `windows-2025-eval-media-v2`.
+This diagnostic is not proof of a fresh stage `30` or a booted guest; preserve
+the unpublished image and rerun the saved stage before continuing.
+
+## Server 2025 first boot: activation already in progress
+
+The next v4 run passed stage `30`, template OOBE and verified Sysprep, and
+created the seven Windows guests. Stage `40` verified activation on the first
+five guests, then stopped on `JS-INSIGHT-01` with `/ato` exit `-1073422296`
+and `0xC004E028`. Microsoft documents this code as another activation request
+already being processed, not a bad key or an expired evaluation.
+
+The saved Evaluation path now handles only that exact native exit and error
+code by observing the installed licensing product for at most 300 seconds.
+It starts no second `/ato`, reboot, key change or rearm, and still requires
+exactly one `TIMEBASED_EVAL` product with `LicenseStatus=1` and positive
+remaining evaluation time. All other errors remain fatal. A timeout preserves
+the guest for diagnosis.
+
+After the failed command is terminal, retry only stage `40`, retaining its
+published generalized parent and existing guests. Already licensed guests
+skip activation. Continue with `45`, `50` and `60` only after all stage-40
+gates succeed; do not replay `all` or rebuild the image for this error.
+See [Microsoft's activation-error reference](https://support.microsoft.com/en-us/windows/activation/get-help-with-windows-activation-errors).
 
 ## Bastion was the first avoidable wait
 

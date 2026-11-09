@@ -2,10 +2,13 @@
 
 ## Objective and boundary
 
-Automate the infrastructure so the user reaches the one required interactive
-handoff: installing and connecting Arc with their own Azure identity. The agent
+Automate the infrastructure so the user reaches the required interactive
+Arc handoff: installing and connecting Arc with their own Azure identity. The agent
 owns deployment, monitoring, safe recovery, readiness verification through
 stage `60`, and staging the Arc launchers.
+The optional licensed SQL path also pauses for user-owned media acquisition
+and upload after the host is ready. This is an intentional input boundary,
+not a requirement to automate workstation-to-private-network file transfer.
 
 | Agent-prepared prerequisite | User/workshop action afterward |
 |---|---|
@@ -14,8 +17,10 @@ stage `60`, and staging the Arc launchers.
 | Four Database Engine and two SSAS installations, sample data, cluster, AG and listener | Export Resource Graph modeling data |
 | Arc resource group, SQL licensing tag and desktop launchers | Migrate `JumpstartStandaloneDB` to SQL Managed Instance |
 
-The defaults produce seven nested VMs: `JS-DC-01`, `JS-SQL-01`,
-`JS-SQL-AG-01`, `JS-SQL-AG-02`, `JS-RETAIL-01`, `JS-INSIGHT-01` and `JS-UBUNTU-01`. The domain is
+The defaults produce eight nested VMs: `JS-DC-01`, `JS-SQL-01`,
+`JS-SQL-AG-01`, `JS-SQL-AG-02`, `JS-RETAIL-01`, `JS-INSIGHT-01`,
+`JS-UBUNTU-01` and the unused `JS-MIGRATE-01`. All Windows guests and the
+Marketplace host use Server 2025; no custom host image is required. The domain is
 `jumpstart.lab`; the AG is `JS-AG-01`.
 
 ## Inputs to obtain once
@@ -27,9 +32,67 @@ Read [prerequisites](01-prerequisites.md) and `deploy.env.example`. Obtain:
   required by the prerequisites.
 - Approved host size and quota/cost envelope, including default-enabled Bastion.
   Keep Bastion enabled unless the user asks to omit it; it is not a build gate.
-- Host, nested-image, DSRM and SQL-service credentials through a secure channel.
-  The nested-image password must match the chosen source image.
+- Host, DSRM and SQL-service credentials through a secure channel.
+  New Windows guests always use the public lab-only password `JS123!!`.
+- One shared SQL `sa` password for the four Database Engines:
+  `init-config.ps1` generates `SQL_SA_PASSWORD` once per new private configuration.
+  Keep that 52-character value; do not generate a different password per guest
+  or reuse another lab credential. Installation enables mixed mode and retains
+  Windows administrator access. SSAS has no `sa` login.
 - Any approved image/media overrides; use the documented defaults otherwise.
+- Before deploying, explicitly ask whether to use default SQL Developer or
+  the user's own licensed SQL Server 2025 Standard and Enterprise ISOs.
+  Record that choice in `SQL_EDITION_MODE`. The licensed option requires approved pre-keyed ISOs and the
+  [private media checkpoint](../scripts/README.md#licensed-sql-media), not a
+  manual SQL installation or a public storage exception.
+
+### Licensed-media conversation and handoff
+
+If the user already uploaded authorized media for a previous lab, ask whether
+to reuse that account instead of uploading again. Record its approved resource
+group and account in `SQL_MEDIA_RESOURCE_GROUP` and `SQL_MEDIA_ACCOUNT_NAME`.
+The existing account/container/settings are only referenced; the new lab gets
+its own private endpoint and host read role. Valid existing media is checked
+after stage `10`, then `all` continues automatically without an upload pause.
+Never infer permission to share another lab's storage from its existence.
+
+If the user chooses their own ISOs, explain before deployment that the build
+will pause after the host and private storage are ready unless they approved
+reuse of existing media. For a new upload, offer both supported
+routes: select the ISOs with `Upload licensed SQL media.cmd` on the outer host,
+or upload both directly into the root of its configured `sql-media` container
+using approved private connectivity. Do not imply that a desktop uploader is
+the only supported route.
+
+At the pause, report the actual host, storage account, media resource group,
+container name and Blob URL from the deployed foundation outputs. Ask which
+upload route the user prefers and guide that route. Direct uploads must have
+their original Microsoft `enu_sql_server_2025_<edition>_edition_x64_dvd_<id>.iso`
+names or `SQL2025-Standard.iso` / `SQL2025-Enterprise.iso`, one per edition,
+not inside a virtual folder. Never request media keys or file contents in chat,
+make storage public, or require new workstation networking.
+
+When the user says both uploads are finished, the agent runs `deploy.ps1 continue`
+asynchronously with the same private `ENV_FILE`. It first reads any existing
+manifest. Only a confirmed `BlobNotFound` starts root discovery, signature and
+pre-keyed-media validation, SHA-256 calculation, and create-only manifest
+publication. This uses the current Azure CLI operator's storage token through
+protected parameters; the host managed identity retains read-only access.
+The user does not write the manifest manually. If an ISO is missing, ambiguous,
+or invalid, explain the exact correction and retain completed infrastructure.
+After it is corrected, retry the same media checkpoint, not `all`.
+
+For the default `IMAGE_MODE=installation-media`, the Windows password `JS123!!`
+is set during initial setup, not inherited from a VHDX. Obtain approved Windows
+Server 2025 Evaluation and Ubuntu
+ISO sources and the operator's Linux SSH public key; never collect a
+private key. The official Windows default is downloaded and publisher-verified
+on the Azure host, with a recorded/rechecked fingerprint; custom Windows media
+and Ubuntu require approved checksums. The configuration helper creates a local
+operator key when needed. The same normal deployment chain builds the disks without
+Jumpstart images or user-hosted Blob storage. This experimental path still
+requires a full clean-build proof; see
+[image preparation and recovery](../scripts/README.md#installation-media-images).
 
 The wrappers currently require an Azure CLI **user** identity. Do not imply
 that service-principal-based unattended authentication has been implemented.
@@ -61,14 +124,19 @@ non-safety setting:
 | Arc resource group | `rg-arc-jumpstart-v2-arc` |
 | Name prefix | `jsarc` |
 | Host size | `Standard_E16s_v7` |
+| Host OS | Standard Azure Marketplace Server 2025 Datacenter Gen2 (`2025-datacenter-g2`), non-Hotpatch with manual patching; no custom image |
+| Nested Windows OS | Server 2025 Datacenter Evaluation, build 26100, prepared from ISO |
+| Reserved appliance guest | `INCLUDE_APPLIANCE_VM=true`: unused `JS-MIGRATE-01`, 8 vCPUs, 16 GiB RAM, 80-GiB disk; no appliance install/registration, domain join, SQL or Arc |
 | Host data disk | 1 TiB Premium SSD |
 | Browser access | Bastion enabled and submitted independently |
 | Images and SQL media | URLs and file names in `deploy.env.example` |
+| SQL edition | Ask before provisioning: default Developer, or the user's pre-keyed Standard and Enterprise ISOs |
 | Configuration | Durable owner-only file outside the repository |
 | Host, DSRM and SQL service passwords | Generate unique strong values directly in the approved private file when the user has not supplied them |
-| Nested Windows password | The documented source-image password, unless the image source is overridden |
+| SQL `sa` password | Keep the single generated `SQL_SA_PASSWORD` in the private file and use it for all four Database Engines; never print it or rotate it on retry |
+| Nested Windows password | Always `JS123!!` for new guests; public lab-only credential, never for host/DSRM/SQL service |
 | Auto-shutdown | Ask whether to enable it, and if enabled ask for the daily time and time zone; never infer consent from repository defaults |
-| Arc desktop launchers | Stage on all Windows guests by default; they remain inert until the user opens one and authenticates. Allow `PREPARE_ARC_LAUNCHERS=false` as an override |
+| Arc desktop launchers | Stage on the six Windows workload guests, not the reserved appliance VM; they remain inert until the user authenticates. Allow `PREPARE_ARC_LAUNCHERS=false` as an override |
 | Execution | Validation, infrastructure preflight and `deploy.ps1 all` in a separate terminal or asynchronous process |
 | User boundary | Stop after staging launchers; do not connect Arc, run assessment or migrate data |
 
@@ -158,6 +226,25 @@ Only start the next command after the prior one succeeds; do not run deployment
 after failed source validation or preflight.
 The deployment wrapper does not itself invoke those two entry points.
 
+With `SQL_EDITION_MODE=licensed`, exit `2` after stage `10` is the explicit
+user-media handoff, not completion or a provisioning failure. Use the staged
+host upload launcher, then `deploy.ps1 continue`. This continuation preserves
+the `20`/`30` overlap and never replays `00`/`10`. Do not use it again after
+any later stage was submitted; inspect and recover the actual failed stage.
+For an explicitly requested new-OS trial, replace `all` with `os-only` in the
+same validated/preflighted chain. It uses the same fresh-target safety checks,
+stages the SQL upload helper after `10`, and continues through `40` without
+requiring SQL media. It creates no SQL installation, domain or Arc connection.
+After a successful OS trial and licensed-media upload, `continue` resumes at
+`45` without repeating OS preparation; failed/partial trials require scoped
+recovery instead.
+The default Developer path has no media-upload pause. In licensed mode the user
+obtains the ISOs from their authorized source on the prepared host, then uses
+the upload helper. Do not block infrastructure creation on transferring local
+workstation copies or add a VPN/Bastion upgrade for that purpose. Basic Bastion
+is not a file-transfer tunnel; any alternative private transfer is separately
+user-arranged and must not require public Blob access.
+
 ### Responsive agent execution
 
 An attached agent must run the chain in a dedicated visible terminal or an
@@ -207,7 +294,9 @@ already available. If access ever needs repair, use the independent deployment
 instead of replaying infrastructure stages.
 
 Monitor execution rather than asking the learner to perform routine setup
-between stages. Stage `30` downloads approximately 38 GiB of images; stage `45`
+between stages. In legacy `jumpstart` mode, stage `30` downloads approximately
+38 GiB of images. In `installation-media` mode it downloads ISOs and prepares
+local disks, and stage `40` also installs Ubuntu. Stage `45`
 downloads SQL media once and installs assigned SQL/SSAS features on five guests in parallel. A quiet
 terminal is not proof of a hang, and a running VM is not proof that SQL is ready.
 
@@ -317,15 +406,16 @@ Do not hand off solely because the outer VM exists or an ARM deployment says
 | Area | Required handoff state |
 |---|---|
 | Deployment | Stages through `60` succeeded; asynchronous script executions are terminal with exit `0`; no unresolved installer or configuration operation remains. |
-| Guests | The seven intended nested guests exist and are running; Linux boot/access is usable, and the six Windows guests completed native setup, activation, and Enhanced Session Mode prerequisites. |
+| Guests | All selected guests exist and are running: eight by default, seven with Linux excluded. Every Windows guest, including the reserved appliance VM, completed native setup, activation, unique-SID and Enhanced Session Mode gates. Verify Linux boot/access only when selected. |
+| Reserved appliance VM | When selected, `JS-MIGRATE-01` has 8 vCPUs, 16 GiB RAM, 80-GiB disk and internal-network DHCP access; it remains a workgroup VM without SQL, appliance installation/registration or Arc launchers. |
 | Domain | Expected domain, DNS locator records, SYSVOL/NETLOGON and SQL service account; SQL members have healthy secure channels. |
-| SQL | Four SQL Server 2025 Enterprise Developer Database Engine instances with intended administrative access; both AG engines use the configured domain service identity. `JS-SQL-01` stays engine-only. |
+| SQL | Four SQL Server 2025 Database Engine instances of the selected editions, in mixed mode with enabled `sa` and the shared private `SQL_SA_PASSWORD`. Each passes an encrypted TCP `sa` sysadmin query and retains Windows administrative access; both AG engines use the configured domain service identity. `JS-SQL-01` stays engine-only. |
 | SSAS | `JS-RETAIL-01` and `JS-INSIGHT-01` run SSAS 2025 Tabular with TCP 2383 reachable from the host; no BI models are deployed. `JS-INSIGHT-01` has no relational engine services, registry instances or orphaned instance files. SSAS application authentication and assessment visibility are separate checks, not implied by a listening port. |
 | Cluster | Both intended nodes `Up`, correct cluster computer account and configured file-share witness online. |
 | AG | One primary and one secondary; `JumpstartDB` synchronized, healthy and not suspended on both. |
 | Listener | Intended DNS/IP and TCP `1433`, plus an actual integrated-authentication SQL query from the standalone guest to the primary database. |
 | Relational samples | `JumpstartStandaloneDB` online on `JS-SQL-01`; `JumpstartRetailDB` on `JS-RETAIL-01`. The migration exercise still uses `JS-SQL-01`. |
-| Arc handoff | Dedicated Arc resource group and licensing tag exist; **Connect to Azure Arc.cmd** is staged on every Windows guest. |
+| Arc handoff | Dedicated Arc resource group and licensing tag exist; **Connect to Azure Arc.cmd** is staged on the six Windows workload guests, excluding the reserved appliance VM. |
 | Configuration handoff | The actual full `ENV_FILE` path, execution host, and platform-specific find/view instructions have been explicitly presented to the user without exposing file contents. |
 | User boundary | Arc launchers are staged, but no Arc connection, assessment, collector installation or migration has been performed. |
 

@@ -18,6 +18,10 @@ param hostSubnetId string
 @description('VM size. Must support nested virtualization (Dv3/Ev3 or newer) and have enough RAM for the nested guests.')
 param hostVmSize string = 'Standard_E16s_v7'
 
+@description('Standard Marketplace host image. Server 2025 uses non-Hotpatch Gen2 Datacenter to retain manual patching; no custom image is required.')
+@allowed(['2022', '2025'])
+param windowsServerVersion string = '2025'
+
 @description('Local administrator name on the Hyper-V host.')
 param adminUsername string
 
@@ -34,8 +38,11 @@ param dataDiskSizeGB int = 1024
 param setStandardSecurityType bool = true
 
 param runId string
+param sqlMediaAccountName string = ''
+param sqlMediaResourceGroup string = resourceGroup().name
 
 var hostVmName = '${namePrefix}-host'
+var hostImageSku = windowsServerVersion == '2025' ? '2025-datacenter-g2' : '2022-datacenter-azure-edition'
 
 resource nic 'Microsoft.Network/networkInterfaces@2024-05-01' = {
   name: '${hostVmName}-nic'
@@ -61,6 +68,7 @@ resource hostVm 'Microsoft.Compute/virtualMachines@2024-07-01' = {
   name: hostVmName
   location: location
   tags: tags
+  identity: { type: 'SystemAssigned' }
   properties: union({
     hardwareProfile: {
       vmSize: hostVmSize
@@ -69,7 +77,7 @@ resource hostVm 'Microsoft.Compute/virtualMachines@2024-07-01' = {
       imageReference: {
         publisher: 'MicrosoftWindowsServer'
         offer: 'WindowsServer'
-        sku: '2022-datacenter-azure-edition'
+        sku: hostImageSku
         version: 'latest'
       }
       osDisk: {
@@ -145,5 +153,13 @@ module initHost '../../modules/hostRunCommand.bicep' = {
   }
 }
 
+module mediaReader '../../modules/sqlMediaReader.bicep' = if (!empty(sqlMediaAccountName)) {
+  name: 'host-sql-media-reader'
+  scope: resourceGroup(sqlMediaResourceGroup)
+  params: {
+    accountName: sqlMediaAccountName
+    principalId: hostVm.identity.principalId
+  }
+}
 output hostVmName string = hostVm.name
 output hostPrivateIp string = nic.properties.ipConfigurations[0].properties.privateIPAddress

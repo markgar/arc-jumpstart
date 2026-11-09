@@ -49,6 +49,64 @@ Do not depend on an earlier conversation, session artifact or a hand-repaired
 VM. The repository must contain the implementation and instructions needed for
 the next build.
 
+New labs use the standard Azure Marketplace Windows Server 2025 Datacenter
+Gen2 (`2025-datacenter-g2`) host, not a custom image or Hotpatch SKU.
+This keeps manual patching and controlled host restarts. `IMAGE_MODE=installation-media` builds
+local guest disks from approved Windows Server 2025 Evaluation and Ubuntu 22.04.5 ISOs without Jumpstart VHDX
+downloads or user-hosted blobs. The Azure host downloads the official Windows
+source with publisher verification and records/rechecks its fingerprint.
+Custom Windows media and Ubuntu require approved checksums. A Linux SSH public
+key is required when Linux is included. All new nested Windows guests use the
+public lab-only password `JS123!!`; never reuse it for the host, DSRM, or SQL
+service account. `INCLUDE_APPLIANCE_VM=true` reserves `JS-MIGRATE-01` with
+8 vCPUs and 16 GiB RAM as an unused workgroup Windows VM. Do not install or
+register the Migrate appliance, install SQL, join it to the domain, or prepare
+Arc launchers there. Existing configurations without the new settings retain
+Server 2022 and no appliance guest; do not upgrade a running lab implicitly.
+Follow [image preparation and recovery](scripts/README.md#installation-media-images).
+This mode is experimental until a clean Azure run proves all readiness gates.
+Never replace evaluation licensing checks with KMS conversion or a rearm.
+
+New Database Engine installations use mixed mode with `sa` enabled.
+`init-config.ps1` generates one private 52-character `SQL_SA_PASSWORD` per lab;
+use that same saved value for all four engines, not the public Windows guest
+password or any host, DSRM or SQL service password. Keep it in the private
+`ENV_FILE`, never in chat, scripts, manifests or logs. SSAS has no `sa` login.
+Stage `45` verifies an encrypted TCP `sa` sysadmin query and preserved Windows
+admin access. It never resets an existing login or converts/restarts a running
+instance to repair an authentication mismatch; require scoped recovery approval.
+
+Before deploying, ask whether the user wants default SQL Developer or their
+own authorized pre-keyed SQL Server 2025 Standard and Enterprise ISOs. Record
+the decision; do not assume Developer when they want custom media. If media
+already exists, ask for approval to reuse its account. Set both
+`SQL_MEDIA_RESOURCE_GROUP` and `SQL_MEDIA_ACCOUNT_NAME`: the account settings
+and uploads are preserved, the new host gains private read access, and valid
+media is checked after stage `10` without another upload pause. Do not assume
+sharing permission. For new media storage, the optional
+`SQL_EDITION_MODE=licensed` path stages a private-media upload checkpoint after
+stage `10` and returns exit `2`. Supply authorized pre-keyed Standard/Enterprise
+ISOs through the saved host launcher or directly to the root of the configured
+`sql-media` Blob container, then use `deploy.ps1 continue`; never
+replay `all` against these existing groups. See
+[licensed media and ingress boundaries](scripts/README.md#licensed-sql-media).
+At the media checkpoint, give the actual storage account, resource group,
+container name/URL, and host desktop launcher name. Explain both upload routes
+and ask which the user will use. For direct uploads, preserve the original
+Microsoft filenames or use `SQL2025-Standard.iso` and `SQL2025-Enterprise.iso`,
+with exactly one ISO per edition in the container root. After the user reports
+upload completion, the agent runs the saved continuation: it checks for an
+existing manifest and, if missing, validates and hashes the root uploads and
+publishes the manifest using the current operator's protected storage token.
+Do not ask the user to create JSON, reupload valid root ISOs, or rebuild Windows.
+Missing, ambiguous, or invalid media requires a specific user-facing correction,
+not an invented manifest or a skipped check.
+Obtaining and uploading authorized media is the user's responsibility.
+Do not make automated workstation-to-private-network transfer a build
+prerequisite or add networking solely to move the user's existing ISO copies.
+Developer does not pause for media. Neither new path is a clean-build proof
+until all live readiness gates pass.
+
 ## Execution contract
 
 1. Establish whether this is a new deployment or recovery of an existing lab.

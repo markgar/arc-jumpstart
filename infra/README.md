@@ -13,14 +13,15 @@ group before deploying them.
 
 | Stage entry point | Host artifact / responsibility |
 |---|---|
-| [00-foundation](stages/00-foundation/main.bicep) | VNet, host subnet, NSG and reserved `AzureBastionSubnet` through `modules/network.bicep`. No Bastion host or public IP. |
+| [00-foundation](stages/00-foundation/main.bicep) | VNet, host/endpoint subnets, NSG and reserved `AzureBastionSubnet`; private SQL media account in a separate retained group, private endpoint/DNS and operator upload RBAC. No Bastion host or public IP. |
 | [bastion](stages/bastion/main.bicep) | Independent Basic Bastion and Standard public IP against the existing access subnet. Enabled by default, submitted without waiting after `00`; not a numbered-stage dependency. |
 | [auto-shutdown](stages/auto-shutdown/main.bicep) | Independent enabled/disabled daily shutdown schedule for the existing outer host. The operator must explicitly choose the policy, time and time zone; it is applied after stage `10`. |
-| [arc-launchers](stages/arc-launchers/main.bicep) | Post-build helper, enabled by default in `all`, that securely stages interactive device-code launchers on all Windows guest public desktops. It creates no Arc machine connection and can be omitted with `PREPARE_ARC_LAUNCHERS=false`. |
+| [arc-launchers](stages/arc-launchers/main.bicep) | Post-build helper, enabled by default in `all`, that securely stages interactive device-code launchers on the six Windows workload guest desktops, excluding the reserved appliance VM. It creates no Arc connection and can be omitted with `PREPARE_ARC_LAUNCHERS=false`. |
 | [ssms](stages/ssms/main.bicep) | Independent host-only SSMS 22 bootstrapper staging and installation, enabled after the core stages by default; opt out with `INSTALL_HOST_SSMS=false` or retry only `deploy.ps1 ssms`. No guest readiness dependency or automatic host reboot. |
 | [10-hyperv-host](stages/10-hyperv-host/main.bicep) | Azure VM, NIC and persistent data disk; [`10-init-host.ps1`](../artifacts/scripts/10-init-host.ps1) prepares the host. |
+| [sql-media](stages/sql-media/main.bicep) | Stages the licensed ISO upload launcher on the host or checks the private manifest using managed identity. Developer mode never pauses here. |
 | [20-host-network](stages/20-host-network/main.bicep) | [`20-host-network.ps1`](../artifacts/scripts/20-host-network.ps1): nested switch, NAT and DHCP. |
-| [30-images](stages/30-images/main.bicep) | [`30-download-images.ps1`](../artifacts/scripts/30-download-images.ps1): Windows/Linux image cache. |
+| [30-images](stages/30-images/main.bicep) | [`30-download-images.ps1`](../artifacts/scripts/30-download-images.ps1): ISO downloads and local Windows/Ubuntu installer disk preparation by default, or legacy prebuilt image downloads. |
 | [40-nested-vms](stages/40-nested-vms/main.bicep) | [`40-create-nested-vms.ps1`](../artifacts/scripts/40-create-nested-vms.ps1): generalized Windows parent, guests, completed/activated setup, names and SIDs. |
 | [45-sql-install](stages/45-sql-install/main.bicep) | [`45-install-sql.ps1`](../artifacts/scripts/45-install-sql.ps1) orchestrates [`45-install-sql-engine.ps1`](../artifacts/scripts/45-install-sql-engine.ps1) across five guests: four Database Engines and two SSAS instances, colocated on `JS-RETAIL-01`; `JS-INSIGHT-01` has SSAS only. |
 | [50-domain](stages/50-domain/main.bicep) | [`50-configure-domain.ps1`](../artifacts/scripts/50-configure-domain.ps1): AD/DNS, membership, identities and SQL access. |
@@ -36,6 +37,38 @@ host VM with a Managed Run Command. PowerShell is embedded with `loadTextContent
 stage `45` also embeds its engine installer. A public script-storage account is
 not required. Downloaded OS images and SQL/module packages remain separate,
 documented external dependencies.
+
+The default `installation-media` image mode embeds
+[`image-media.ps1`](../artifacts/scripts/image-media.ps1) into stages `30` and `40`.
+Stage `30` verifies direct ISO downloads and prepares the local Windows
+Evaluation disk and Ubuntu unattended installer. After the existing `20`/`30`
+join, stage `40` overlaps Ubuntu installation with Windows template preparation,
+then verifies installed Ubuntu before creating the final guests. The Windows
+template must complete native setup before Sysprep. Evaluation guests retain
+their evaluation edition and require verified activation and remaining time,
+not the default KMS client key. The source disks, receipts and host SSH key
+stay under the restricted `F:\ArcJumpstart\Images\InstallationMedia` directory.
+The image builder itself does not use Blob storage; the foundation's separate
+private account is for optional licensed SQL media. See
+[configuration and recovery](../scripts/README.md#installation-media-images);
+this path needs a fresh Azure acceptance run.
+
+New templates set `WINDOWS_SERVER_VERSION=2025`: stage `10` uses the ordinary
+`MicrosoftWindowsServer:WindowsServer:2025-datacenter-g2:latest`
+Marketplace host image, while stages `30`/`40` build Server 2025 Evaluation
+guests from ISO. The host image is non-Hotpatch to preserve manual patching
+and controlled restarts. No custom host image is required. Build and receipt checks
+keep Server 2022 and 2025 media/parents separate; existing environments without
+the version key retain Server 2022. KMS provisioning remains a legacy
+Server 2022 Jumpstart path, never an Evaluation conversion.
+
+`INCLUDE_APPLIANCE_VM=true` in new templates adds an unused `JS-MIGRATE-01`
+workgroup guest with 8 vCPUs, 16 GiB RAM and an 80-GiB Windows disk on the
+internal switch/DHCP network. It passes the same Windows readiness gates but
+is excluded from domain joins, SQL installation and Arc launchers.
+Appliance software and project registration are not provisioned. Missing
+flags in existing files mean no appliance guest; do not replay stage `40`
+against a promoted domain to expand it.
 
 Each wrapper invocation supplies a new `RunId`. Sensitive parameters use Bicep
 secure parameters and Run Command protected parameters. Script failures are
@@ -69,6 +102,14 @@ access problem, never a prerequisite for stages `10`-`60`.
 - Nested network: `192.168.128.0/24` behind the host's internal Hyper-V switch/NAT.
 - Persistent host data: `F:\ArcJumpstart`; do not substitute Azure temporary disk
   storage for images or guest disks.
+- Licensed SQL media: `<root>-media` (or explicitly configured group), retained
+  separately from infrastructure cleanup. Its endpoint/DNS link is disposable
+  with the lab network; account public/shared-key access remains disabled.
+- Approved existing media: set both `SQL_MEDIA_RESOURCE_GROUP` and
+  `SQL_MEDIA_ACCOUNT_NAME` to reference the existing account/container without
+  redeploying its policies or uploader roles. Each lab gets its own private
+  endpoint/DNS and host Reader assignment. `all` checks the saved media after
+  stage `10` and continues without a redundant upload pause.
 - Windows guests use differencing disks backed by a locally generalized parent.
   Never rewrite a parent that has dependent disks.
 - Host transcripts are under `C:\ArcJumpstart\Logs`; treat raw logs as sensitive.

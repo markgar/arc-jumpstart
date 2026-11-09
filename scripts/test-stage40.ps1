@@ -79,6 +79,12 @@ function Assert-Throws {
             $Filter -ne "ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f'") {
             throw 'Activation must inspect installed Windows products only.'
         }
+        if ($script:waitingForActivation) {
+            $script:pendingActivationReads++
+            if ($script:pendingActivationReads -ge $script:activationCompletesAfter) {
+                $script:products = $script:activationProducts
+            }
+        }
         $script:products
     }
     function Get-Command {
@@ -90,6 +96,12 @@ function Assert-Throws {
         $script:licenseCalls += ,@($args)
         if ($args[0] -ne '//NoLogo' -or $args[1] -notlike '*\System32\slmgr.vbs') { throw 'Invoke the Windows slmgr script, not a guessed installer.' }
         $verb = $args[2]
+        if ($verb -eq '/ato' -and $script:activationPendingError) {
+            $script:waitingForActivation = $true
+            $global:LASTEXITCODE = -1073422296
+            'Error: 0xC004E028'
+            return
+        }
         $global:LASTEXITCODE = if ($verb -eq $script:failVerb) { 5 } else { 0 }
         if ($verb -eq '/ipk' -and $args[3] -ne (Get-WindowsServer2022KmsConfiguration).ProductKey) { throw 'Use the edition-specific public GVLK.' }
         if ($verb -eq '/skms' -and $args[3] -ne 'azkms.core.windows.net:1688') { throw 'Use the documented Azure KMS endpoint.' }
@@ -106,6 +118,8 @@ function Assert-Throws {
         $script:products = @((New-LicensedProduct 0))
         $script:activationProducts = @((New-LicensedProduct))
         $script:licenseCalls = @(); $script:failVerb = ''; $script:errorTextVerb = ''; $script:applyActivation = $true
+        $script:activationPendingError = $false; $script:waitingForActivation = $false
+        $script:pendingActivationReads = 0; $script:activationCompletesAfter = 2
     }
     Reset-Activation
     $password = 'A<&>"''special-password'
@@ -186,6 +200,84 @@ function Assert-Throws {
         Enable-WindowsServer2022AzureKms
         if ((Get-WindowsServer2022KmsConfiguration).Edition -ne 'ServerDatacenter') { throw 'Guest helper transport must preserve image detection.' }
     }
+    Reset-Activation
+    $script:WindowsLicenseMode = 'evaluation'
+    $script:edition = 'ServerDatacenterEval'
+    $script:products = @((New-LicensedProduct 1 'TIMEBASED_EVAL' 'EVAL1'))
+    $script:products[0] | Add-Member GracePeriodRemaining 259200
+    [xml]$xml = New-WindowsServer2022Unattend -AdministratorPassword $password
+    $ns = [Xml.XmlNamespaceManager]::new($xml.NameTable)
+    $ns.AddNamespace('u', 'urn:schemas-microsoft-com:unattend')
+    if ($xml.SelectNodes('//u:ProductKey', $ns).Count) { throw 'Evaluation setup must not inject a KMS or AVMA key.' }
+    Enable-WindowsServer2022AzureKms
+    if ($script:licenseCalls.Count) { throw 'Activated Evaluation must not change its product key or contact KMS.' }
+    foreach ($minutes in @(0, -1)) {
+        $script:products[0].GracePeriodRemaining = $minutes
+        Assert-Throws { Enable-WindowsServer2022AzureKms } 'Evaluation activation postcondition failed'
+    }
+    $script:products[0].GracePeriodRemaining = 259200
+    $script:products[0].LicenseStatus = 0
+    $script:activationProducts = @((New-LicensedProduct 1 'TIMEBASED_EVAL' 'EVAL1'))
+    $script:activationProducts[0] | Add-Member GracePeriodRemaining 259200
+    & {
+        . ([scriptblock]::Create((Get-WindowsProvisioningHelperScript)))
+        Enable-WindowsServer2022AzureKms
+    }
+    if (($script:licenseCalls | ForEach-Object { $_[2] }) -join ',' -ne '/ato') {
+        throw 'Evaluation may activate, but must never rearm, install a GVLK, or change editions.'
+    }
+    $script:products = @((New-LicensedProduct 1 'VOLUME_KMSCLIENT'))
+    Assert-Throws { Enable-WindowsServer2022AzureKms } 'exactly one installed TIMEBASED_EVAL'
+    $script:edition = 'ServerDatacenter'
+    Assert-Throws { Get-WindowsServer2022KmsConfiguration } 'evaluation mode requires Evaluation media'
+    $script:WindowsServerVersion = '2025'
+    $script:build = '26100'
+    $script:edition = 'ServerDatacenterEval'
+    $script:products = @((New-LicensedProduct 1 'TIMEBASED_EVAL' 'EVAL1'))
+    $script:products[0] | Add-Member GracePeriodRemaining 259200
+    $script:licenseCalls = @()
+    & {
+        . ([scriptblock]::Create((Get-WindowsProvisioningHelperScript)))
+        Enable-WindowsServer2022AzureKms
+        if ((Get-WindowsServer2022KmsConfiguration).Build -cne '26100') {
+            throw 'The guest helper package must preserve the selected Server 2025 build.'
+        }
+        [xml]$answer = New-WindowsServer2022Unattend -AdministratorPassword 'JS123!!'
+        if ($answer.OuterXml -match '<ProductKey>') { throw 'Server 2025 Evaluation must not receive a KMS key.' }
+    }
+    if ($script:licenseCalls.Count) { throw 'Licensed Server 2025 Evaluation must not change its licensing.' }
+    & {
+        function Get-Date { [datetime]'2026-11-06T22:00:00Z' + [timespan]::FromSeconds($script:activationClock) }
+        function Start-Sleep { param($Seconds) $script:activationClock += $Seconds }
+        foreach ($complete in @($true, $false)) {
+            $script:activationClock = 0; $script:pendingActivationReads = 0
+            $script:waitingForActivation = $false; $script:activationPendingError = $true
+            $script:activationCompletesAfter = if ($complete) { 2 } else { [int]::MaxValue }
+            $script:products = @((New-LicensedProduct 0 'TIMEBASED_EVAL' 'EVAL1'))
+            $script:products[0] | Add-Member GracePeriodRemaining 259200
+            $script:activationProducts = @((New-LicensedProduct 1 'TIMEBASED_EVAL' 'EVAL1'))
+            $script:activationProducts[0] | Add-Member GracePeriodRemaining 259200
+            $script:licenseCalls = @()
+            if ($complete) {
+                . ([scriptblock]::Create((Get-WindowsProvisioningHelperScript)))
+                Enable-WindowsServer2022AzureKms
+            }
+            else {
+                Assert-Throws { Enable-WindowsServer2022AzureKms } 'did not reach a licensed state within 300 seconds'
+                if ($script:activationClock -ne 300) { throw 'Activation waiting must have a fixed deadline.' }
+            }
+            if ($script:licenseCalls.Count -ne 1 -or $script:licenseCalls[0][2] -ne '/ato') {
+                throw 'An existing activation must be observed without competing activation commands.'
+            }
+        }
+        $script:activationPendingError = $false; $script:waitingForActivation = $false
+    }
+    $script:build = '20348'
+    Assert-Throws { Get-WindowsServer2022KmsConfiguration } 'Unsupported Windows image'
+    $script:build = '26100'
+    $script:WindowsLicenseMode = 'azure-kms'
+    Assert-Throws { Get-WindowsServer2022KmsConfiguration } 'only supported for the existing Server 2022'
+    $script:WindowsServerVersion = '2022'
 }
 
 & {
@@ -245,6 +337,16 @@ function Assert-Throws {
     Reset-Cache
     $script:cacheFiles["$parent.ready"] = New-ReadyMarker
     if ((& $check) -ne 'Ready' -or (& $build) -ne $parent -or $script:cacheMutations) { throw 'Valid versioned parents must be reused without modifying them.' }
+    $script:WindowsServerVersion = '2025'
+    $script:WindowsLicenseMode = 'evaluation'
+    Assert-Throws $check 'Stale or incompatible'
+    $script:cacheFiles["$parent.ready"] = @{
+        Version = 'windows-server-2025-eval-v1'; SourceVhd = $sourceDisk
+        Build = '26100'; Edition = 'ServerDatacenterEval'; CompletedUtc = '2026-11-06T00:00:00Z'
+    } | ConvertTo-Json
+    if ((& $check) -ne 'Ready' -or $script:cacheMutations) { throw 'Reuse verified Server 2025 parents without changing their disks.' }
+    $script:WindowsServerVersion = '2022'
+    $script:WindowsLicenseMode = 'azure-kms'
     foreach ($marker in @('2026-09-16T08:00:00Z', (New-ReadyMarker).Replace('gvlk-v1', 'old-v0'),
         (New-ReadyMarker).Replace('20348', '26100'), (New-ReadyMarker).Replace('ServerStandard', 'ServerStandardEval'))) {
         Reset-Cache
@@ -393,6 +495,20 @@ function Assert-Throws {
     $LinuxImageFileName = 'ubuntu.vhdx'
     $DcMemoryGB = 4; $SqlMemoryGB = 8; $LinuxMemoryGB = 4
     $definitions = & ([scriptblock]::Create($definitionAssignment.Right.Extent.Text))
+    $linuxFilter = $ast.Find({
+        param($node)
+        $node -is [Management.Automation.Language.IfStatementAst] -and
+            $node.Clauses[0].Item1.Extent.Text -eq '$IncludeLinux -eq ''false'''
+    }, $true)
+    if (-not $linuxFilter) { throw 'Linux must have an explicit opt-out before guest creation.' }
+    $allDefinitions = $definitions
+    $IncludeLinux = 'false'
+    function Write-ImagePhase { param($Message) }
+    . ([scriptblock]::Create($linuxFilter.Extent.Text))
+    if ($definitions.Count -ne 6 -or @($definitions | Where-Object Linux).Count -ne 0) {
+        throw 'Windows-only mode must create exactly the six Windows guests.'
+    }
+    $definitions = $allDefinitions
     $expectedProcessors = @{
         'JS-DC-01' = 2
         'JS-SQL-01' = 6
@@ -416,6 +532,39 @@ function Assert-Throws {
             throw 'New BI guests must use 8 GiB (mixed) and 4 GiB (SSAS-only).'
         }
     }
+    $applianceAddition = $ast.Find({
+        param($node)
+        $node -is [Management.Automation.Language.IfStatementAst] -and
+            $node.Clauses[0].Item1.Extent.Text -eq '$IncludeAppliance -eq ''true'''
+    }, $true)
+    if (-not $applianceAddition) { throw 'The unused appliance guest needs an explicit opt-in for existing labs.' }
+    $IncludeAppliance = 'false'
+    . ([scriptblock]::Create($applianceAddition.Extent.Text))
+    if ($definitions.Count -ne 7) { throw 'Existing labs must not gain an appliance VM implicitly.' }
+    $IncludeAppliance = 'true'
+    . ([scriptblock]::Create($applianceAddition.Extent.Text))
+    $appliance = @($definitions | Where-Object Name -eq 'JS-MIGRATE-01')
+    if ($definitions.Count -ne 8 -or $appliance.Count -ne 1 -or $appliance[0].Memory -ne 16 -or
+        $appliance[0].Processors -ne 8 -or $appliance[0].Linux -or $appliance[0].Parent -ne $generalizedWindowsImage -or
+        ($definitions | Measure-Object Processors -Sum).Sum -ne 38 -or
+        ($definitions | Measure-Object Memory -Sum).Sum -ne 60) {
+        throw 'The unused appliance guest must use the selected Windows parent, 8 vCPUs and 16 GiB RAM.'
+    }
+    $IncludeLinux = 'false'
+    . ([scriptblock]::Create($linuxFilter.Extent.Text))
+    if ($definitions.Count -ne 7 -or @($definitions | Where-Object Linux).Count -or
+        ($definitions | Measure-Object Processors -Sum).Sum -ne 36 -or
+        ($definitions | Measure-Object Memory -Sum).Sum -ne 56) {
+        throw 'Windows-only mode must retain the unused Windows appliance guest.'
+    }
+    foreach ($file in @('50-configure-domain.ps1', '45-install-sql.ps1', 'prepare-arc-device-code-launchers.ps1')) {
+        $fileAst = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PSScriptRoot "../artifacts/scripts/$file"), [ref]$null, [ref]$null)
+        if ($fileAst.Extent.Text.Contains("'JS-MIGRATE-01'")) {
+            throw 'The unused appliance guest must not join the domain, install SQL, or receive Arc launchers.'
+        }
+    }
+    $definitions = $allDefinitions
 
     $vmRoot = Join-Path (Get-Location) '.stage40-cpu-fixture'
     $switchName = 'test-switch'
@@ -631,7 +780,8 @@ if ($source.Contains("Get-VM -Name 'JS-*'") -or $source.Contains('Rebuilding $Na
     throw 'Stage40 must not stop existing lab guests or automatically replace mismatched disks to rebuild a cache.'
 }
 if (-not $source.Contains('$unattend = New-WindowsServer2022Unattend -AdministratorPassword $AdministratorPassword') -or
-    -not $source.Contains("Version = 'windows-server-2022-gvlk-v1'")) { throw 'Template generation must use the new answer file and versioned completion marker.' }
+    -not $source.Contains("'windows-server-2022-gvlk-v1'") -or
+    -not $source.Contains("'windows-server-2022-eval-v1'")) { throw 'Template generation must use the answer file and license-specific versioned completion marker.' }
 & {
     $loops = @($ast.FindAll({
         param($node)

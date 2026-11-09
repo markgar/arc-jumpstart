@@ -6,6 +6,13 @@ After collecting the required Azure target, cost, and credential decisions,
 your agent should create and verify the complete environment without further
 intervention. It should run through the domain, SQL installations, cluster,
 availability group, sample databases, and Arc launcher staging.
+Before deployment, the agent asks whether to use default SQL Developer or your
+own pre-keyed SQL Server 2025 Standard and Enterprise ISOs. The licensed path
+with new media storage has one earlier, intentional handoff: after the host and private storage are
+ready, upload with the host's desktop helper or put both ISOs directly in the
+configured Blob container root. The agent guides the chosen route and the
+continuation validates the uploads and creates a missing manifest automatically.
+Developer mode needs no media handoff.
 
 The agent stops before adding the servers to Azure Arc because that step
 requires you to authenticate with your own Azure identity. Open the staged
@@ -37,7 +44,7 @@ truth.
 
 ## What this builds
 
-The lab creates an Azure-hosted Windows Server 2022 Hyper-V environment that
+The lab creates an Azure-hosted Windows Server 2025 Hyper-V environment that
 an agent prepares for:
 
 1. User-authenticated Azure Arc onboarding.
@@ -55,10 +62,11 @@ flowchart LR
     NAT --> Mixed["JS-RETAIL-01<br/>SQL + SSAS"]
     NAT --> BI["JS-INSIGHT-01<br/>SSAS only"]
     NAT --> Linux["JS-UBUNTU-01"]
+    NAT --> Appliance["JS-MIGRATE-01<br/>unused appliance VM"]
     AG1 <--> AG2
 ```
 
-The agent prepares the domain, four SQL Server 2025 Enterprise Developer
+By default, the agent prepares the domain, four SQL Server 2025 Enterprise Developer
 Database Engine instances, two SSAS Tabular instances (without models), sample
 relational databases, WSFC, availability group, listener, Arc resource
 group, host-only SSMS 22 and desktop launchers. SSMS installation runs
@@ -72,6 +80,9 @@ perform or reuse an assessment, export modeling data, and migrate
 **Building the environment could take 2 hours.** Actual time varies with
 downloads and any required recovery. See the
 [measured build duration](docs/00-agent-bootstrap.md#measured-build-duration).
+The optional [read-only build dashboard](scripts/README.md#read-only-build-dashboard)
+shows stage evidence, parallel preparation, guest readiness and captured recovery
+history in a browser or Copilot Browser canvas, without another Azure polling loop.
 
 This is a disposable evaluation environment. The default outer host is
 `Standard_E16s_v7` in `westus2`, with a 1 TiB Premium SSD and optional Azure
@@ -87,11 +98,35 @@ before deployment.
 | `JS-RETAIL-01` | SQL Database Engine + SSAS | 4 | 8 GiB |
 | `JS-INSIGHT-01` | SSAS only, no Database Engine | 4 | 4 GiB |
 | `JS-UBUNTU-01` | Linux | 2 | 4 GiB |
+| `JS-MIGRATE-01` | Unused workgroup Windows VM, reserved for the Migrate appliance | 8 | 16 GiB |
 
-The seven guests have 30 assigned virtual cores on the 16-vCPU host. SSAS uses
-the same non-production Developer media; no SSIS or sample BI models are
+The eight guests have 38 assigned virtual cores and 60 GiB startup RAM on the
+16-vCPU / 128-GiB host. `INCLUDE_APPLIANCE_VM=false` omits the reserved VM.
+It uses an 80-GiB disk, the internal switch and DHCP; no appliance software,
+SQL, domain join, or Arc launcher is installed there. Later appliance installation
+and project registration are separate user actions. Microsoft's
+[Hyper-V script requirements](https://learn.microsoft.com/en-us/azure/migrate/deploy-appliance-script)
+include Windows Server 2025, 8 vCPUs, 16 GB RAM and approximately 80 GB disk.
+SSAS uses
+the same non-production Developer media by default; no SSIS or sample BI models are
 installed. SSAS discovery and assessment coverage must be verified separately
 from relational SQL inventory; see the [assessment guide](docs/04-assessment.md).
+
+For authorized, pre-keyed SQL Server 2025 Standard and Enterprise ISOs,
+`SQL_EDITION_MODE=licensed` uses private Blob storage and pauses after host
+creation for user media upload, either through the desktop launcher or directly
+to the configured container root. Standard is assigned to standalone
+and BI guests; Enterprise to the two full-AG replicas. Developer never pauses
+for an ISO upload. See the [private-media workflow](scripts/README.md#licensed-sql-media).
+Both new image preparation and licensed SQL installation still need live
+clean-build acceptance; local regression results are not that proof.
+If authorized SQL media is already stored for another lab, approve its reuse
+and set both `SQL_MEDIA_RESOURCE_GROUP` and `SQL_MEDIA_ACCOUNT_NAME`. The new
+lab references the existing account without changing its settings or uploads,
+adds its own private connection and read access, verifies the existing media,
+and continues without another upload handoff.
+For a fresh OS-only trial that does not wait for licensed SQL media, use the
+saved [`configure-installation-media.ps1` and `deploy.ps1 os-only` path](scripts/README.md#preparing-a-fresh-installation-media-trial).
 
 ## Prerequisites
 
@@ -144,9 +179,20 @@ Use scoped recovery for an existing lab, not `all`.
 | Nested Windows local Administrator and `JUMPSTART\Administrator` | `NESTED_WINDOWS_PASSWORD` |
 | Directory Services Restore Mode | `SAFE_MODE_PASSWORD` |
 | SQL domain service account | `SQL_SERVICE_ACCOUNT_PASSWORD` |
+| SQL Server Authentication, login `sa` (all four engines) | `SQL_SA_PASSWORD` |
 
 Passwords are not printed after creation. Record the private `ENV_FILE` path;
 do not commit the file or recover secrets from deployment logs.
+New nested Windows guests always use `JS123!!`, a public lab-only password.
+Host, DSRM and SQL service passwords must remain unique and strong.
+`init-config.ps1` generates one private 52-character `SQL_SA_PASSWORD` per new
+lab. All four Database Engines install in mixed mode with `sa` enabled and use
+that same password, while retaining Windows administrator access. SSAS does not
+use `sa`. The shared password is lab-only, distinct from other credentials and
+never printed. From host SSMS, choose **SQL Server Authentication**, login
+`sa`, the guest IP with port `1433`, **Mandatory** encryption and **Trust server
+certificate** for the lab certificate; your Bastion Windows account is unrelated.
+See [host SQL connections](docs/02-deploy.md#connect-to-nested-sql-from-the-host).
 
 Run:
 
@@ -212,7 +258,67 @@ Agent and implementation references:
 - [SQL AG lessons and recovery boundaries](docs/02-sql-ag-lessons.md)
 - [Clean-room evidence and remaining gaps](docs/02-clean-room-lessons.md)
 
-The default VHDX files are external Microsoft Jumpstart artifacts and are not
+The optional legacy VHDX files are external Microsoft Jumpstart artifacts and are not
 redistributed here. Stage `40` generalizes the Windows parent before cloning;
 stage `45` installs SQL from verified Microsoft media. See the prerequisites
 and troubleshooting guide before changing images, media, or licensing.
+
+## Build without the Jumpstart images
+
+The default `IMAGE_MODE=installation-media` path downloads official Windows and
+Ubuntu installation ISOs and builds local Hyper-V disks on the outer host.
+It does not use the Jumpstart VHDX endpoints or require image uploads.
+SQL is installed separately: Enterprise Developer by default, or licensed
+Standard/Enterprise using the independent private SQL-media storage.
+
+In the private environment file, set:
+
+```text
+IMAGE_MODE=installation-media
+WINDOWS_SERVER_VERSION=2025
+INCLUDE_APPLIANCE_VM=true
+WINDOWS_ISO_URL=https://go.microsoft.com/fwlink/?linkid=2345730&clcid=0x409&culture=en-us&country=us
+WINDOWS_ISO_SHA256=auto
+LINUX_SSH_PUBLIC_KEY=<your OpenSSH public key, not your private key>
+```
+
+The Linux inventory guest is optional. Set `INCLUDE_LINUX=false` for a
+Windows-only lab: Ubuntu downloads, installer preparation, and guest creation
+are omitted, and no Linux SSH key is required. Existing labs default to
+including Linux. This does not bypass any Windows readiness or licensing gate.
+
+Obtain Windows media through the
+[Microsoft Evaluation Center](https://www.microsoft.com/en-us/evalcenter/download-windows-server-2025),
+including its registration and evaluation terms. Use the English x64 ISO;
+the builder selects Datacenter Evaluation with Desktop Experience, build 26100.
+`NESTED_WINDOWS_PASSWORD=JS123!!` is the fixed lab-only Windows guest password.
+The host independently uses the regular Azure Marketplace
+`MicrosoftWindowsServer:WindowsServer:2025-datacenter-g2:latest`
+image; no custom Azure host image is built or needed.
+This is the ordinary non-Hotpatch Gen2 Datacenter image, preserving manual
+patching and deliberate restarts on the Hyper-V host.
+Existing configurations without `WINDOWS_SERVER_VERSION` continue to select
+Server 2022 and do not gain an appliance VM. For a deliberate legacy Jumpstart
+build, select `WINDOWS_SERVER_VERSION=2022` and `IMAGE_MODE=jumpstart`;
+its externally maintained VHDX is not a Server 2025 image.
+The Ubuntu 22.04.5 server ISO URL and checksum are supplied in
+`deploy.env.example`; existing configuration files must add those two settings.
+Windows downloads directly on the Azure host, restricted to official Microsoft
+HTTPS redirects, with Microsoft Setup-signature verification and a recorded
+SHA-256 fingerprint checked on cache reuse. `auto` works only with this exact
+source; custom sources require an approved checksum. The fingerprint is not a
+separately published Microsoft checksum.
+No ISO is downloaded to the workstation. The normal validation, preflight,
+and deployment commands are unchanged.
+
+Windows Evaluation expires after 180 days and requires internet activation.
+The build checks activation and remaining evaluation time; it never rearms or
+converts editions. Ubuntu uses `jumpstart` with your SSH public key; password
+login is disabled. Reach its private address through the host or approved
+private connectivity. The host generates a separate restricted verification key.
+These disks contain no preinstalled Arc agent or SQL Server.
+
+**This is an experimental path until a fresh Azure build passes every readiness
+gate through stage `60`.** Previous VHDX-based results do not prove this path.
+See [image preparation and recovery](scripts/README.md#installation-media-images)
+for cache locations, extra dependencies, and safe retry boundaries.

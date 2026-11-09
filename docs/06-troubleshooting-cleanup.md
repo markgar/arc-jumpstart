@@ -58,6 +58,33 @@ and reconnect via Bastion; if access fails, use the alternate Run Command
 path to inspect the firewall/profile rather than disabling the firewall. See Microsoft's
 [Set-NetConnectionProfile reference](https://learn.microsoft.com/en-us/powershell/module/netconnection/set-netconnectionprofile).
 
+## Server 2025 host image rejected for patch mode
+
+The first Server 2025 v4 attempt failed before VM creation with
+`InvalidParameter`: Hotpatch-compatible images require
+`PatchMode=AutomaticByPlatform`. The Azure Edition SKU selected then was
+incompatible with this lab's manual patching and controlled host restarts.
+Stage `10` now selects the ordinary Gen2 Marketplace
+`MicrosoftWindowsServer:WindowsServer:2025-datacenter-g2:latest` image.
+The existing Server 2022 host SKU is unchanged. Do not enable automatic
+platform patching merely to bypass this gate on a nested-virtualization host.
+
+If that exact creation failure is terminal and no host VM was created, keep
+the successful foundation and use the same private `ENV_FILE`:
+
+```powershell
+./scripts/validate.ps1 &&
+./scripts/deploy.ps1 10 &&
+./scripts/deploy.ps1 auto-shutdown &&
+./scripts/deploy.ps1 continue
+```
+
+`continue` applies only at the documented licensed-media checkpoint, before
+later canonical stages were submitted. It validates existing approved media
+and retains parallel `20`/`30` execution. Run the chain in its own terminal or
+background process. Never replay `all` or change the image of an existing
+host VM as a retry shortcut.
+
 ## Read stage logs
 
 For concise live progress while a stage is running:

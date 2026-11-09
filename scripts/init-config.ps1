@@ -37,6 +37,8 @@ try {
     $content = [System.IO.File]::ReadAllText($path)
     $content = [regex]::Replace($content, '(?m)^RESOURCE_GROUP_ROOT=[^\r\n]*',
         "RESOURCE_GROUP_ROOT=$ResourceGroupRoot")
+    $content = [regex]::Replace($content, '(?m)^SQL_SA_PASSWORD=CHANGEME',
+        ('SQL_SA_PASSWORD=' + (New-LabSqlSaPassword)))
     [System.IO.File]::WriteAllText($path, $content)
     Write-Host "Private configuration template created at $path; replace each CHANGEME without sharing the contents."
 }

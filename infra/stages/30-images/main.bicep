@@ -1,4 +1,4 @@
-metadata description = 'Stage 30 - base images: downloads the prebuilt Jumpstart VHDX images onto the Hyper-V host data disk.'
+metadata description = 'Stage 30 - image cache: downloads Jumpstart disks or builds local installation-media disks on the Hyper-V host.'
 
 targetScope = 'resourceGroup'
 
@@ -19,6 +19,19 @@ param imageFileNames string = 'ArcBox-Win2K22.vhdx;ArcBox-Ubuntu-01.vhdx'
 @description('Optional container SAS token for private source images, without a leading question mark.')
 param imageSourceSasToken string = ''
 
+@allowed(['jumpstart', 'installation-media'])
+param imageMode string = 'installation-media'
+param includeLinux bool = true
+@allowed(['2022', '2025'])
+param windowsServerVersion string = '2025'
+param windowsIsoUrl string = ''
+param windowsIsoSha256 string = ''
+param ubuntuIsoUrl string = ''
+param ubuntuIsoSha256 string = ''
+param linuxSshPublicKey string = ''
+@secure()
+param nestedWindowsPassword string = ''
+
 param runId string
 
 module images '../../modules/hostRunCommand.bicep' = {
@@ -27,7 +40,7 @@ module images '../../modules/hostRunCommand.bicep' = {
     location: location
     hostVmName: '${namePrefix}-host'
     stageName: 'stage30-images'
-    scriptContent: loadTextContent('../../../artifacts/scripts/30-download-images.ps1')
+    scriptContent: replace(loadTextContent('../../../artifacts/scripts/30-download-images.ps1'), '# IMAGE_MEDIA_HELPERS', loadTextContent('../../../artifacts/scripts/image-media.ps1'))
     runId: runId
     timeoutInSeconds: 14400
     asyncExecution: true
@@ -36,6 +49,10 @@ module images '../../modules/hostRunCommand.bicep' = {
         {
           name: 'ImageSourceSasToken'
           value: imageSourceSasToken
+        }
+        {
+          name: 'NestedWindowsPassword'
+          value: nestedWindowsPassword
         }
       ]
     }
@@ -48,6 +65,14 @@ module images '../../modules/hostRunCommand.bicep' = {
         name: 'ImageFileNames'
         value: imageFileNames
       }
+      { name: 'ImageMode', value: imageMode }
+      { name: 'IncludeLinux', value: string(includeLinux) }
+      { name: 'WindowsServerVersion', value: windowsServerVersion }
+      { name: 'WindowsIsoUrl', value: windowsIsoUrl }
+      { name: 'WindowsIsoSha256', value: windowsIsoSha256 }
+      { name: 'UbuntuIsoUrl', value: ubuntuIsoUrl }
+      { name: 'UbuntuIsoSha256', value: ubuntuIsoSha256 }
+      { name: 'LinuxSshPublicKey', value: linuxSshPublicKey }
     ]
   }
 }
